@@ -9,12 +9,13 @@ import {
   Scene,
   SRGBColorSpace,
   WebGLRenderer,
+  type Object3D,
 } from 'three';
 import { ViewportObserver, type ViewportMeasurement } from '../platform/viewport';
 import { FrameClock } from './frameClock';
 import { ResourceRegistry, type ResourceRegistryCounts } from './ResourceRegistry';
 
-const NEUTRAL_RESOURCE_GROUP = 'neutral-scene';
+const NEUTRAL_RESOURCE_GROUP_PREFIX = 'neutral-scene';
 const CAMERA_POSITION = [0, 1.5, 5] as const;
 
 export interface ThreeRuntimeFrame {
@@ -53,6 +54,50 @@ export interface ThreeRuntimeMetrics {
   };
 }
 
+interface RuntimeViewport {
+  readonly measurement: ViewportMeasurement | null;
+  start(): void;
+  dispose(): void;
+}
+
+export interface ThreeRuntimeDependencies {
+  readonly createRenderer: (canvas: HTMLCanvasElement) => WebGLRenderer;
+  readonly createScene: () => Scene;
+  readonly createCamera: () => PerspectiveCamera;
+  readonly createClock: () => FrameClock;
+  readonly createResources: () => ResourceRegistry;
+  readonly createViewport: (
+    canvas: HTMLCanvasElement,
+    renderer: WebGLRenderer,
+    camera: PerspectiveCamera,
+    onChange: () => void,
+  ) => RuntimeViewport;
+  readonly buildNeutralScene: (resources: ResourceRegistry, group: string) => Object3D;
+  readonly completeInitialization: () => void;
+}
+
+const DEFAULT_DEPENDENCIES: ThreeRuntimeDependencies = {
+  createRenderer: (canvas) => new WebGLRenderer({
+    canvas,
+    antialias: true,
+    powerPreference: 'high-performance',
+  }),
+  createScene: () => new Scene(),
+  createCamera: () => new PerspectiveCamera(50, 1, 0.1, 100),
+  createClock: () => new FrameClock(),
+  createResources: () => new ResourceRegistry(),
+  createViewport: (canvas, renderer, camera, onChange) =>
+    new ViewportObserver(canvas, renderer, camera, { onChange }),
+  buildNeutralScene: (resources, group) => {
+    const geometry = resources.register(new BoxGeometry(1.4, 1.4, 1.4), group);
+    const material = resources.register(new MeshBasicMaterial({ color: 0xb9c0bd }), group);
+    const mesh = new Mesh(geometry, material);
+    mesh.rotation.set(0.18, 0.35, 0);
+    return mesh;
+  },
+  completeInitialization: () => undefined,
+};
+
 let createdRuntimeCount = 0;
 let disposedRuntimeCount = 0;
 
@@ -63,9 +108,10 @@ export class ThreeRuntime {
 
   private readonly canvas: HTMLCanvasElement;
   private readonly options: ThreeRuntimeOptions;
-  private readonly clock = new FrameClock();
-  private readonly resources = new ResourceRegistry();
-  private readonly viewport: ViewportObserver;
+  private readonly dependencies: ThreeRuntimeDependencies;
+  private readonly clock: FrameClock;
+  private readonly resources: ResourceRegistry;
+  private readonly viewport: RuntimeViewport;
   private readonly onVisibilityChange = (): void => {
     this.syncAnimationLoop();
     this.publishDevelopmentMetrics();
@@ -85,35 +131,82 @@ export class ThreeRuntime {
   private frameCount = 0;
   private renderCount = 0;
   private rebuildCount = 0;
+  private sceneGeneration = 0;
+  private activeResourceGroup: string | null = null;
   private lastDeltaSeconds = 0;
   private disposed = false;
   private loopRunning = false;
+  private visibilityListenerInstalled = false;
+  private countedAsCreated = false;
+  private countedAsDisposed = false;
 
-  constructor(canvas: HTMLCanvasElement, options: ThreeRuntimeOptions = {}) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    options: ThreeRuntimeOptions = {},
+    dependencies?: Partial<ThreeRuntimeDependencies>,
+  ) {
     this.canvas = canvas;
     this.options = options;
-    ColorManagement.enabled = true;
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.outputColorSpace = SRGBColorSpace;
-    this.renderer.toneMapping = ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1;
+    this.dependencies = dependencies === undefined
+      ? DEFAULT_DEPENDENCIES
+      : { ...DEFAULT_DEPENDENCIES, ...dependencies };
 
-    this.scene = new Scene();
-    this.scene.background = new Color(0x7d898b);
-    this.camera = new PerspectiveCamera(50, 1, 0.1, 100);
-    this.camera.position.set(...CAMERA_POSITION);
-    this.camera.up.set(0, 1, 0);
-    this.camera.lookAt(0, 0, 0);
+    let renderer: WebGLRenderer | undefined;
+    let scene: Scene | undefined;
+    let camera: PerspectiveCamera | undefined;
+    let clock: FrameClock | undefined;
+    let resources: ResourceRegistry | undefined;
+    let viewport: RuntimeViewport | undefined;
+    try {
+      ColorManagement.enabled = true;
+      renderer = this.dependencies.createRenderer(canvas);
+      scene = this.dependencies.createScene();
+      camera = this.dependencies.createCamera();
+      clock = this.dependencies.createClock();
+      resources = this.dependencies.createResources();
+      viewport = this.dependencies.createViewport(
+        canvas,
+        renderer,
+        camera,
+        () => this.publishDevelopmentMetrics(),
+      );
+    } catch (error) {
+      const cleanupErrors: unknown[] = [];
+      this.runCleanupStage(cleanupErrors, () => viewport?.dispose());
+      this.runCleanupStage(cleanupErrors, () => clock?.dispose());
+      this.runCleanupStage(cleanupErrors, () => resources?.disposeAll());
+      this.runCleanupStage(cleanupErrors, () => renderer?.dispose());
+      if (cleanupErrors.length !== 0) {
+        throw new AggregateError([error, ...cleanupErrors], 'ThreeRuntime construction failed during rollback.');
+      }
+      throw error;
+    }
 
-    this.viewport = new ViewportObserver(canvas, this.renderer, this.camera, {
-      onChange: () => this.publishDevelopmentMetrics(),
-    });
-    this.buildNeutralScene();
-    this.viewport.start();
-    document.addEventListener('visibilitychange', this.onVisibilityChange);
-    createdRuntimeCount += 1;
-    this.syncAnimationLoop();
-    this.publishDevelopmentMetrics();
+    this.renderer = renderer;
+    this.scene = scene;
+    this.camera = camera;
+    this.clock = clock;
+    this.resources = resources;
+    this.viewport = viewport;
+
+    try {
+      this.configureRendererAndCamera();
+      this.installNeutralScene();
+      this.viewport.start();
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
+      this.visibilityListenerInstalled = true;
+      this.syncAnimationLoop();
+      this.dependencies.completeInitialization();
+      createdRuntimeCount += 1;
+      this.countedAsCreated = true;
+      this.publishDevelopmentMetrics();
+    } catch (error) {
+      const cleanupErrors = this.disposeStages();
+      if (cleanupErrors.length !== 0) {
+        throw new AggregateError([error, ...cleanupErrors], 'ThreeRuntime initialization failed during rollback.');
+      }
+      throw error;
+    }
   }
 
   get metrics(): ThreeRuntimeMetrics {
@@ -148,41 +241,127 @@ export class ThreeRuntime {
 
   rebuildScene(): void {
     if (this.disposed) return;
-    this.clearNeutralScene();
-    this.buildNeutralScene();
+    const nextGroup = this.resourceGroup(this.sceneGeneration + 1);
+    let nextScene: Object3D;
+    try {
+      nextScene = this.dependencies.buildNeutralScene(this.resources, nextGroup);
+    } catch (error) {
+      const rollbackErrors: unknown[] = [];
+      this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
+      if (rollbackErrors.length !== 0) {
+        throw new AggregateError([error, ...rollbackErrors], 'Scene rebuild failed during rollback.');
+      }
+      throw error;
+    }
+
+    const previousGroup = this.activeResourceGroup;
+    const previousChildren = [...this.scene.children];
+    try {
+      this.scene.clear();
+      this.scene.add(nextScene);
+    } catch (error) {
+      const rollbackErrors: unknown[] = [];
+      this.runCleanupStage(rollbackErrors, () => {
+        this.scene.clear();
+        this.scene.add(...previousChildren);
+      });
+      this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
+      if (rollbackErrors.length !== 0) {
+        throw new AggregateError([error, ...rollbackErrors], 'Scene rebuild commit failed during rollback.');
+      }
+      throw error;
+    }
+
+    this.activeResourceGroup = nextGroup;
+    this.sceneGeneration += 1;
     this.rebuildCount += 1;
+    const cleanupErrors: unknown[] = [];
+    if (previousGroup !== null) {
+      this.runCleanupStage(cleanupErrors, () => this.resources.disposeGroup(previousGroup));
+    }
     this.publishDevelopmentMetrics();
+    if (cleanupErrors.length !== 0) {
+      throw new AggregateError(cleanupErrors, 'Scene rebuild committed but previous resources failed to dispose.');
+    }
   }
 
   dispose(): void {
     if (this.disposed) return;
+    const errors = this.disposeStages();
+    if (errors.length !== 0) throw new AggregateError(errors, 'ThreeRuntime disposal failed.');
+  }
+
+  private configureRendererAndCamera(): void {
+    this.renderer.outputColorSpace = SRGBColorSpace;
+    this.renderer.toneMapping = ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1;
+    this.scene.background = new Color(0x7d898b);
+    this.camera.position.set(...CAMERA_POSITION);
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(0, 0, 0);
+  }
+
+  private installNeutralScene(): void {
+    const group = this.resourceGroup(this.sceneGeneration);
+    try {
+      this.scene.add(this.dependencies.buildNeutralScene(this.resources, group));
+      this.activeResourceGroup = group;
+    } catch (error) {
+      const rollbackErrors: unknown[] = [];
+      this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(group));
+      if (rollbackErrors.length !== 0) {
+        throw new AggregateError([error, ...rollbackErrors], 'Scene initialization failed during rollback.');
+      }
+      throw error;
+    }
+  }
+
+  private disposeStages(): unknown[] {
+    if (this.disposed) return [];
     this.disposed = true;
-    document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    this.renderer.setAnimationLoop(null);
+    const errors: unknown[] = [];
+    this.runCleanupStage(errors, () => this.renderer.setAnimationLoop(null));
     this.loopRunning = false;
-    this.clock.dispose();
-    this.viewport.dispose();
-    this.clearNeutralScene();
-    this.resources.disposeAll();
-    this.renderer.dispose();
-    disposedRuntimeCount += 1;
+    this.runCleanupStage(errors, () => {
+      if (this.visibilityListenerInstalled) {
+        document.removeEventListener('visibilitychange', this.onVisibilityChange);
+        this.visibilityListenerInstalled = false;
+      }
+    });
+    this.runCleanupStage(errors, () => this.viewport.dispose());
+    this.runCleanupStage(errors, () => this.clock.dispose());
+    this.runCleanupStage(errors, () => {
+      this.scene.clear();
+      if (this.activeResourceGroup !== null) {
+        const group = this.activeResourceGroup;
+        this.activeResourceGroup = null;
+        this.resources.disposeGroup(group);
+      }
+    });
+    this.runCleanupStage(errors, () => this.resources.disposeAll());
+    this.runCleanupStage(errors, () => this.renderer.dispose());
+    this.runCleanupStage(errors, () => this.finalizeDisposal());
+    return errors;
+  }
+
+  private finalizeDisposal(): void {
+    if (this.countedAsCreated && !this.countedAsDisposed) {
+      disposedRuntimeCount += 1;
+      this.countedAsDisposed = true;
+    }
     if (import.meta.env.DEV) delete this.canvas.dataset.threeRuntimeMetrics;
   }
 
-  private buildNeutralScene(): void {
-    const geometry = this.resources.register(new BoxGeometry(1.4, 1.4, 1.4), NEUTRAL_RESOURCE_GROUP);
-    const material = this.resources.register(
-      new MeshBasicMaterial({ color: 0xb9c0bd }),
-      NEUTRAL_RESOURCE_GROUP,
-    );
-    const mesh = new Mesh(geometry, material);
-    mesh.rotation.set(0.18, 0.35, 0);
-    this.scene.add(mesh);
+  private resourceGroup(generation: number): string {
+    return `${NEUTRAL_RESOURCE_GROUP_PREFIX}:${generation}`;
   }
 
-  private clearNeutralScene(): void {
-    this.scene.clear();
-    this.resources.disposeGroup(NEUTRAL_RESOURCE_GROUP);
+  private runCleanupStage(errors: unknown[], stage: () => void): void {
+    try {
+      stage();
+    } catch (error) {
+      errors.push(error);
+    }
   }
 
   private syncAnimationLoop(): void {
@@ -194,7 +373,7 @@ export class ThreeRuntime {
   }
 
   private publishDevelopmentMetrics(): void {
-    if (import.meta.env.DEV && !this.disposed) {
+    if (import.meta.env.DEV && !this.disposed && this.countedAsCreated) {
       this.canvas.dataset.threeRuntimeMetrics = JSON.stringify(this.metrics);
     }
   }

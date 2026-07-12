@@ -42,6 +42,13 @@ interface RuntimeMetrics {
   };
 }
 
+interface CanvasDimensions {
+  cssWidth: number;
+  cssHeight: number;
+  bufferWidth: number;
+  bufferHeight: number;
+}
+
 async function metrics(page: Page): Promise<RuntimeMetrics> {
   return page.locator('#app-canvas').evaluate((canvas, attribute) => {
     const value = canvas.getAttribute(attribute);
@@ -72,6 +79,27 @@ async function setDeviceMetrics(
   });
 }
 
+async function canvasDimensions(page: Page): Promise<CanvasDimensions> {
+  return page.locator('#app-canvas').evaluate((element) => {
+    if (!(element instanceof HTMLCanvasElement)) {
+      throw new Error('Expected #app-canvas to be an HTMLCanvasElement');
+    }
+    return {
+      cssWidth: element.clientWidth,
+      cssHeight: element.clientHeight,
+      bufferWidth: element.width,
+      bufferHeight: element.height,
+    };
+  });
+}
+
+function expectCanvasDimensions(value: RuntimeMetrics, canvas: CanvasDimensions): void {
+  expect(value.viewport.cssWidth).toBe(canvas.cssWidth);
+  expect(value.viewport.cssHeight).toBe(canvas.cssHeight);
+  expect(value.viewport.bufferWidth).toBe(canvas.bufferWidth);
+  expect(value.viewport.bufferHeight).toBe(canvas.bufferHeight);
+}
+
 function expectCappedBuffer(value: RuntimeMetrics): void {
   expect(value.viewport.pixelRatio).toBeLessThanOrEqual(MAX_DEVICE_PIXEL_RATIO);
   expect(value.viewport.bufferWidth * value.viewport.bufferHeight).toBeLessThanOrEqual(
@@ -88,13 +116,9 @@ for (const size of [
     await page.goto(SUPPORTED_URL);
 
     const value = await waitForMetrics(page);
-    const display = await page.locator('#app-canvas').evaluate((canvas) => ({
-      width: canvas.clientWidth,
-      height: canvas.clientHeight,
-    }));
-    expect(value.viewport.cssWidth).toBe(display.width);
-    expect(value.viewport.cssHeight).toBe(display.height);
-    expect(value.camera.aspect).toBeCloseTo(display.width / display.height, 5);
+    const canvas = await canvasDimensions(page);
+    expectCanvasDimensions(value, canvas);
+    expect(value.camera.aspect).toBeCloseTo(canvas.cssWidth / canvas.cssHeight, 5);
     expect(value.runtime.renders).toBeGreaterThan(0);
     expectCappedBuffer(value);
   });
@@ -110,14 +134,10 @@ test('resizes from portrait to desktop and updates the projection without recrea
     before.viewport.cssWidth,
   );
   const after = await metrics(page);
-  const display = await page.locator('#app-canvas').evaluate((canvas) => ({
-    width: canvas.clientWidth,
-    height: canvas.clientHeight,
-  }));
+  const canvas = await canvasDimensions(page);
 
-  expect(after.viewport.cssWidth).toBe(display.width);
-  expect(after.viewport.cssHeight).toBe(display.height);
-  expect(after.camera.aspect).toBeCloseTo(display.width / display.height, 5);
+  expectCanvasDimensions(after, canvas);
+  expect(after.camera.aspect).toBeCloseTo(canvas.cssWidth / canvas.cssHeight, 5);
   expect(after.runtime.created).toBe(before.runtime.created);
   expectCappedBuffer(after);
 });
@@ -130,6 +150,7 @@ test('uses DPR 1 exactly and caps emulated DPR 3 by ratio and total pixels', asy
   expect(value.viewport.pixelRatio).toBe(1);
   expect(value.viewport.bufferWidth).toBe(value.viewport.cssWidth);
   expect(value.viewport.bufferHeight).toBe(value.viewport.cssHeight);
+  expectCanvasDimensions(value, await canvasDimensions(page));
 
   const previousCssWidth = value.viewport.cssWidth;
   await setDeviceMetrics(session, 1920, 1080, 3);
@@ -137,14 +158,7 @@ test('uses DPR 1 exactly and caps emulated DPR 3 by ratio and total pixels', asy
   value = await metrics(page);
   expect(value.viewport.pixelRatio).toBeLessThan(3);
   expectCappedBuffer(value);
-  const drawingBuffer = await page.locator('#app-canvas').evaluate((element) => {
-    if (!(element instanceof HTMLCanvasElement)) {
-      throw new Error('Expected #app-canvas to be an HTMLCanvasElement');
-    }
-    return { width: element.width, height: element.height };
-  });
-  expect(value.viewport.bufferWidth).toBe(drawingBuffer.width);
-  expect(value.viewport.bufferHeight).toBe(drawingBuffer.height);
+  expectCanvasDimensions(value, await canvasDimensions(page));
   await session.send('Emulation.clearDeviceMetricsOverride');
 });
 
@@ -159,7 +173,7 @@ test('starts with fixed upright camera defaults', async ({ page }) => {
   expect(value.camera.up).toEqual([0, 1, 0]);
 });
 
-test('stops while hidden and resumes without a large first-frame delta', async ({ page }) => {
+test('freezes while hidden then resumes with a fresh baseline and normal cadence', async ({ page }) => {
   await page.goto(SUPPORTED_URL);
   await waitForMetrics(page);
 
@@ -220,13 +234,21 @@ test('stops while hidden and resumes without a large first-frame delta', async (
     });
     await expect.poll(async () => (await metrics(page)).frame.visible).toBe(true);
     await expect.poll(async () => (await metrics(page)).frame.running).toBe(true);
-    await expect.poll(async () => (await metrics(page)).frame.frameCount).toBeGreaterThan(hiddenFrameCount);
-    const firstResumed = await page.evaluate((minimumFrameCount) => {
-      const samples = (window as typeof window & { __viewportFrameSamples?: RuntimeMetrics['frame'][] }).__viewportFrameSamples ?? [];
-      return samples.find((sample) => sample.visible && sample.frameCount > minimumFrameCount);
+    await expect.poll(async () => page.evaluate((minimumFrameCount) => {
+      const samples = (window as typeof window & { __viewportFrameSamples?: RuntimeMetrics['frame'][] })
+        .__viewportFrameSamples ?? [];
+      return samples.filter((sample) => sample.visible && sample.frameCount > minimumFrameCount).length;
+    }, hiddenFrameCount)).toBeGreaterThanOrEqual(2);
+    const resumed = await page.evaluate((minimumFrameCount) => {
+      const samples = (window as typeof window & { __viewportFrameSamples?: RuntimeMetrics['frame'][] })
+        .__viewportFrameSamples ?? [];
+      return samples.filter((sample) => sample.visible && sample.frameCount > minimumFrameCount).slice(0, 2);
     }, hiddenFrameCount);
-    expect(firstResumed).toBeDefined();
-    expect(firstResumed?.deltaSeconds).toBeLessThanOrEqual(0.1);
+    expect(resumed).toHaveLength(2);
+    expect(resumed[0]?.deltaSeconds).toBeLessThanOrEqual(0.001);
+    expect(resumed[0]?.deltaSeconds).not.toBe(0.1);
+    expect(resumed[1]?.deltaSeconds).toBeGreaterThan(0);
+    expect(resumed[1]?.deltaSeconds).toBeLessThan(0.1);
   } finally {
     await page.evaluate(() => {
       const restore = (document as Document & { __restoreViewportVisibility?: () => void }).__restoreViewportVisibility;

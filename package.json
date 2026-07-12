@@ -24,8 +24,8 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
-    "test:browser": "playwright test --config playwright.config.ts tests/browser",
-    "test:visual": "playwright test --config playwright.config.ts tests/visual"
+    "test:browser": "playwright test --config playwright.config.ts",
+    "test:visual": "playwright test --config playwright.visual.config.ts"
   },
   "dependencies": {
     "three": "0.185.1"

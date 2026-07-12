@@ -25,7 +25,7 @@ const port = portOverride === undefined ? defaultPort : parsePort(portOverride);
 const baseURL = `http://${host}:${port}`;
 
 export default defineConfig({
-  testDir: './tests',
+  testDir: './tests/browser',
   outputDir: 'test-results',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),

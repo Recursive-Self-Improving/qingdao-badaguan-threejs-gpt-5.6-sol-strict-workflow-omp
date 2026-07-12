@@ -1,4 +1,8 @@
-import { AppController, type AppControllerConfig } from './app/AppController';
+import {
+  AppController,
+  installPageHideHandler,
+  type AppControllerConfig,
+} from './app/AppController';
 
 function readDevelopmentConfig(location: Location): AppControllerConfig {
   if (!import.meta.env.DEV) {
@@ -26,4 +30,4 @@ function readDevelopmentConfig(location: Location): AppControllerConfig {
 
 const controller = new AppController(window.location, readDevelopmentConfig(window.location));
 controller.start();
-window.addEventListener('pagehide', () => controller.destroy(), { once: true });
+installPageHideHandler(controller);

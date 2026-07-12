@@ -48,6 +48,15 @@ export interface AppControllerConfig {
   readonly capabilityOptions?: CapabilityDetectionOptions;
 }
 
+export function installPageHideHandler(
+  controller: Pick<AppController, 'handlePageHide'>,
+  target: Window = window,
+): () => void {
+  const onPageHide = (event: PageTransitionEvent): void => controller.handlePageHide(event);
+  target.addEventListener('pagehide', onPageHide);
+  return () => target.removeEventListener('pagehide', onPageHide);
+}
+
 export class AppController {
   private state: AppState = INITIAL_APP_STATE;
   private readonly scenario: DevelopmentScenario | null;
@@ -87,14 +96,27 @@ export class AppController {
     this.evaluateCapabilities();
   }
 
+  handlePageHide(event: PageTransitionEvent): void {
+    if (!event.persisted) this.destroy();
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    window.removeEventListener('keydown', this.onKeyDown);
-    this.developmentRuntimeCleanup?.();
+    const errors: unknown[] = [];
+    const cleanup = (stage: () => void): void => {
+      try {
+        stage();
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    cleanup(() => window.removeEventListener('keydown', this.onKeyDown));
+    cleanup(() => this.developmentRuntimeCleanup?.());
     this.developmentRuntimeCleanup = null;
-    this.disposeRuntime();
-    this.ui.destroy();
+    cleanup(() => this.disposeRuntime());
+    cleanup(() => this.ui.destroy());
+    if (errors.length !== 0) throw new AggregateError(errors, 'AppController destruction failed.');
   }
 
   private handleUIAction(action: AppUIAction): void {
@@ -210,8 +232,9 @@ export class AppController {
   }
 
   private disposeRuntime(): void {
-    this.runtime?.dispose();
+    const runtime = this.runtime;
     this.runtime = null;
+    runtime?.dispose();
   }
 
   private dispatch(event: AppEvent): boolean {
