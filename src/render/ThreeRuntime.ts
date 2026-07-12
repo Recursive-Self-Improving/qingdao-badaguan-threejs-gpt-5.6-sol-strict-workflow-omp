@@ -1,22 +1,20 @@
 import {
   ACESFilmicToneMapping,
-  BoxGeometry,
   Color,
   ColorManagement,
-  Mesh,
-  MeshBasicMaterial,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
   WebGLRenderer,
-  type Object3D,
 } from 'three';
 import { APP_CONFIG } from '../app/config';
 import { ViewportObserver, type ViewportMeasurement } from '../platform/viewport';
 import { FrameClock } from './frameClock';
 import { ResourceRegistry, type ResourceRegistryCounts } from './ResourceRegistry';
+import { createWorld } from '../world/createWorld';
+import type { Bounds2, NavigationResult, RouteAnchor, Vec2, WorldBuildResult, WorldDebugViewName } from '../world/types';
 
-const NEUTRAL_RESOURCE_GROUP_PREFIX = 'neutral-scene';
+const WORLD_RESOURCE_GROUP_PREFIX = 'world';
 
 export interface ThreeRuntimeFrame {
   readonly deltaSeconds: number;
@@ -53,6 +51,37 @@ export interface ThreeRuntimeMetrics {
     readonly rebuilds: number;
     readonly renders: number;
   };
+  readonly world: WorldRuntimeMetrics;
+}
+
+export interface WorldRuntimeMetrics {
+  readonly roads: {
+    readonly count: number;
+    readonly transverseCount: number;
+    readonly longitudinalCount: number;
+    readonly names: readonly string[];
+  };
+  readonly bounds: { readonly world: Bounds2; readonly navigable: Bounds2 };
+  readonly grade: { readonly spawnHeight: number; readonly northHeight: number; readonly southHeight: number };
+  readonly spawn: Vec2 & { readonly groundHeight: number; readonly yaw: number };
+  readonly reset: Vec2 & { readonly groundHeight: number; readonly yaw: number };
+  readonly route: readonly string[];
+  readonly publicGreen: { readonly id: string; readonly name: string };
+  readonly sightlines: readonly string[];
+  readonly debug: {
+    readonly visible: boolean;
+    readonly currentAnchorId: string | null;
+    readonly roadLabelCount: number;
+    readonly sightlineCount: number;
+    readonly publicGreenVisible: boolean;
+    readonly lastProbe: WorldNavigationProbe | null;
+    readonly activeView: WorldDebugViewName | null;
+  };
+}
+
+
+export interface WorldNavigationProbe extends NavigationResult {
+  readonly requested: Vec2;
 }
 
 interface RuntimeViewport {
@@ -73,7 +102,7 @@ export interface ThreeRuntimeDependencies {
     camera: PerspectiveCamera,
     onChange: () => void,
   ) => RuntimeViewport;
-  readonly buildNeutralScene: (resources: ResourceRegistry, group: string) => Object3D;
+  readonly buildWorld: (resources: ResourceRegistry, group: string) => WorldBuildResult;
   readonly completeInitialization: () => void;
 }
 
@@ -94,13 +123,7 @@ const DEFAULT_DEPENDENCIES: ThreeRuntimeDependencies = {
   createResources: () => new ResourceRegistry(),
   createViewport: (canvas, renderer, camera, onChange) =>
     new ViewportObserver(canvas, renderer, camera, { onChange }),
-  buildNeutralScene: (resources, group) => {
-    const geometry = resources.register(new BoxGeometry(1.4, 1.4, 1.4), group);
-    const material = resources.register(new MeshBasicMaterial({ color: 0xb9c0bd }), group);
-    const mesh = new Mesh(geometry, material);
-    mesh.rotation.set(0.18, 0.35, 0);
-    return mesh;
-  },
+  buildWorld: createWorld,
   completeInitialization: () => undefined,
 };
 
@@ -139,6 +162,9 @@ export class ThreeRuntime {
   private rebuildCount = 0;
   private sceneGeneration = 0;
   private activeResourceGroup: string | null = null;
+  private activeWorld: WorldBuildResult | null = null;
+  private lastProbe: WorldNavigationProbe | null = null;
+  private lastWorldMetrics: WorldRuntimeMetrics | null = null;
   private lastDeltaSeconds = 0;
   private disposed = false;
   private loopRunning = false;
@@ -197,7 +223,7 @@ export class ThreeRuntime {
 
     try {
       this.configureRendererAndCamera();
-      this.installNeutralScene();
+      this.installWorld();
       this.viewport.start();
       document.addEventListener('visibilitychange', this.onVisibilityChange);
       this.visibilityListenerInstalled = true;
@@ -213,6 +239,10 @@ export class ThreeRuntime {
       }
       throw error;
     }
+  }
+
+  get worldBuildResult(): WorldBuildResult | null {
+    return this.activeWorld;
   }
 
   get metrics(): ThreeRuntimeMetrics {
@@ -243,15 +273,16 @@ export class ThreeRuntime {
         rebuilds: this.rebuildCount,
         renders: this.renderCount,
       },
+      world: this.currentWorldMetrics(),
     };
   }
 
   rebuildScene(): void {
     if (this.disposed) return;
     const nextGroup = this.resourceGroup(this.sceneGeneration + 1);
-    let nextScene: Object3D;
+    let nextWorld: WorldBuildResult;
     try {
-      nextScene = this.dependencies.buildNeutralScene(this.resources, nextGroup);
+      nextWorld = this.dependencies.buildWorld(this.resources, nextGroup);
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
@@ -262,15 +293,17 @@ export class ThreeRuntime {
     }
 
     const previousGroup = this.activeResourceGroup;
+    const previousWorld = this.activeWorld;
     const previousChildren = [...this.scene.children];
     try {
       this.scene.clear();
-      this.scene.add(nextScene);
+      this.scene.add(nextWorld.root);
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => {
         this.scene.clear();
         this.scene.add(...previousChildren);
+        this.activeWorld = previousWorld;
       });
       this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
       if (rollbackErrors.length !== 0) {
@@ -280,6 +313,9 @@ export class ThreeRuntime {
     }
 
     this.activeResourceGroup = nextGroup;
+    this.activeWorld = nextWorld;
+    this.lastProbe = null;
+    nextWorld.debug.setView(null);
     this.sceneGeneration += 1;
     this.rebuildCount += 1;
     const cleanupErrors: unknown[] = [];
@@ -291,6 +327,69 @@ export class ThreeRuntime {
       throw new AggregateError(cleanupErrors, 'Scene rebuild committed but previous resources failed to dispose.');
     }
   }
+
+  setWorldDebugVisible(visible: boolean): void {
+    if (!import.meta.env.DEV || this.disposed) return;
+    this.activeWorld?.debug.setVisible(visible);
+    if (!visible) this.activeWorld?.debug.setView(null);
+    this.publishDevelopmentMetrics();
+  }
+
+  visitWorldAnchor(anchorId: string): RouteAnchor | null {
+    if (!import.meta.env.DEV || this.disposed) return null;
+    const anchor = this.activeWorld?.debug.visitAnchor(anchorId) ?? null;
+    this.activeWorld?.debug.setView(null);
+    if (anchor !== null) this.moveCameraTo(anchor.position);
+    this.publishDevelopmentMetrics();
+    return anchor;
+  }
+
+  probeWorldNavigation(requested: Vec2, radius?: number): WorldNavigationProbe | null {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
+    const previous = { x: this.camera.position.x, z: this.camera.position.z };
+    const result = this.activeWorld.navigation.resolve(
+      previous,
+      requested,
+      radius === undefined ? undefined : { radius },
+    );
+    this.lastProbe = { requested: { ...requested }, ...result };
+    this.activeWorld.debug.setView(null);
+    this.moveCameraTo(result.position);
+    this.publishDevelopmentMetrics();
+    return this.lastProbe;
+  }
+  frameWorldDebugView(name: WorldDebugViewName): void {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return;
+    const { data, debug, navigation } = this.activeWorld;
+    debug.setVisible(true);
+    if (name === 'grid') {
+      const bounds = data.worldBounds;
+      const x = (bounds.minX + bounds.maxX) / 2;
+      const z = (bounds.minZ + bounds.maxZ) / 2;
+      this.camera.position.set(x, navigation.sampleGroundHeight(x, z) + 430, z);
+      this.camera.lookAt(x, navigation.sampleGroundHeight(x, z), z);
+    } else if (name === 'public-green') {
+      const bounds = data.publicGreen.bounds;
+      const x = (bounds.minX + bounds.maxX) / 2;
+      const z = (bounds.minZ + bounds.maxZ) / 2;
+      const groundHeight = navigation.sampleGroundHeight(x, z);
+      this.camera.position.set(x, groundHeight + 125, z);
+      this.camera.lookAt(x, groundHeight, z);
+    } else {
+      const bounds = data.worldBounds;
+      const x = (bounds.minX + bounds.maxX) / 2;
+      const northZ = bounds.minZ - 35;
+      const targetZ = -65;
+      this.camera.position.set(x, navigation.sampleGroundHeight(x, northZ) + 240, northZ);
+      this.camera.lookAt(x, navigation.sampleGroundHeight(x, targetZ), targetZ);
+    }
+    debug.setView(name);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
+    this.publishDevelopmentMetrics();
+  }
+
 
   dispose(): void {
     if (this.disposed) return;
@@ -305,14 +404,22 @@ export class ThreeRuntime {
     this.scene.background = new Color(0x7d898b);
     this.camera.position.set(0, APP_CONFIG.camera.eyeHeight, APP_CONFIG.camera.neutralZ);
     this.camera.up.set(...APP_CONFIG.camera.worldUp);
-    this.camera.lookAt(0, APP_CONFIG.camera.eyeHeight, 0);
-    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    this.camera.rotation.set(0, 0, APP_CONFIG.camera.roll, 'YXZ');
   }
 
-  private installNeutralScene(): void {
+  private installWorld(): void {
     const group = this.resourceGroup(this.sceneGeneration);
     try {
-      this.scene.add(this.dependencies.buildNeutralScene(this.resources, group));
+      const world = this.dependencies.buildWorld(this.resources, group);
+      this.scene.add(world.root);
+      this.activeWorld = world;
+      const spawn = world.navigation.spawn;
+      this.camera.position.set(
+        spawn.x,
+        world.navigation.sampleGroundHeight(spawn.x, spawn.z) + APP_CONFIG.camera.eyeHeight,
+        spawn.z,
+      );
+      this.camera.rotation.set(0, world.data.spawnYaw, APP_CONFIG.camera.roll, 'YXZ');
       this.activeResourceGroup = group;
     } catch (error) {
       const rollbackErrors: unknown[] = [];
@@ -338,8 +445,13 @@ export class ThreeRuntime {
     });
     this.runCleanupStage(errors, () => this.viewport.dispose());
     this.runCleanupStage(errors, () => this.clock.dispose());
+    this.runCleanupStage(errors, () => this.activeWorld?.debug.setView(null));
+    this.runCleanupStage(errors, () => {
+      this.lastWorldMetrics = this.worldMetrics();
+    });
     this.runCleanupStage(errors, () => {
       this.scene.clear();
+      this.activeWorld = null;
       if (this.activeResourceGroup !== null) {
         const group = this.activeResourceGroup;
         this.activeResourceGroup = null;
@@ -361,7 +473,51 @@ export class ThreeRuntime {
   }
 
   private resourceGroup(generation: number): string {
-    return `${NEUTRAL_RESOURCE_GROUP_PREFIX}:${generation}`;
+    return `${WORLD_RESOURCE_GROUP_PREFIX}:${generation}`;
+  }
+
+  private moveCameraTo(position: Vec2): void {
+    const sample = this.activeWorld?.navigation.sampleGroundHeight;
+    if (sample === undefined) return;
+    this.camera.position.set(position.x, sample(position.x, position.z) + APP_CONFIG.camera.eyeHeight, position.z);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+  }
+
+  private currentWorldMetrics(): WorldRuntimeMetrics {
+    if (this.activeWorld !== null) return this.worldMetrics();
+    if (this.lastWorldMetrics !== null) return this.lastWorldMetrics;
+    throw new Error('World metrics requested without an initialized world.');
+  }
+
+  private worldMetrics(): WorldRuntimeMetrics {
+    const world = this.activeWorld;
+    if (world === null) throw new Error('World metrics requested without an active world.');
+    const { data, debug, navigation } = world;
+    const transverseCount = data.roads.filter((road) => road.orientation === 'east-west').length;
+    const longitudinalCount = data.roads.length - transverseCount;
+    return {
+      roads: { count: data.roads.length, transverseCount, longitudinalCount, names: data.roads.map((road) => road.name) },
+      bounds: { world: data.worldBounds, navigable: data.navigableBounds },
+      grade: {
+        spawnHeight: navigation.sampleGroundHeight(data.spawn.x, data.spawn.z),
+        northHeight: navigation.sampleGroundHeight(0, data.navigableBounds.minZ),
+        southHeight: navigation.sampleGroundHeight(0, data.navigableBounds.maxZ),
+      },
+      spawn: { ...data.spawn, groundHeight: navigation.sampleGroundHeight(data.spawn.x, data.spawn.z), yaw: data.spawnYaw },
+      reset: { ...data.reset, groundHeight: navigation.sampleGroundHeight(data.reset.x, data.reset.z), yaw: data.resetYaw },
+      route: data.route.anchorIds,
+      publicGreen: { id: data.publicGreen.id, name: data.publicGreen.name },
+      sightlines: data.sightlines.map((sightline) => sightline.id),
+      debug: {
+        visible: debug.visible,
+        currentAnchorId: debug.currentAnchorId,
+        roadLabelCount: debug.roadLabelCount,
+        sightlineCount: debug.sightlineCount,
+        publicGreenVisible: debug.publicGreenVisible,
+        lastProbe: this.lastProbe,
+        activeView: debug.currentView,
+      },
+    };
   }
 
   private runCleanupStage(errors: unknown[], stage: () => void): void {

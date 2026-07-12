@@ -196,9 +196,33 @@ export class AppController {
     const eventName = 'three-runtime:command';
     const listener = (event: Event): void => {
       if (!(event instanceof CustomEvent)) return;
-      const detail = event.detail as { action?: unknown; count?: unknown } | null;
+      const detail = event.detail as Record<string, unknown> | null;
       if (detail?.action === 'rebuild') {
         this.runtime?.rebuildScene();
+        return;
+      }
+      if (detail?.action === 'world-debug/set-visible') {
+        if (typeof detail.visible === 'boolean') this.runtime?.setWorldDebugVisible(detail.visible);
+        return;
+      }
+      if (detail?.action === 'world-debug/visit-anchor') {
+        if (typeof detail.anchorId === 'string') this.runtime?.visitWorldAnchor(detail.anchorId);
+        return;
+      }
+      if (detail?.action === 'world-debug/frame-view') {
+        if (detail.name === 'grid' || detail.name === 'public-green' || detail.name === 'sightlines') {
+          this.runtime?.frameWorldDebugView(detail.name);
+        }
+        return;
+      }
+      if (detail?.action === 'world-debug/probe') {
+        if (typeof detail.x === 'number' && Number.isFinite(detail.x)
+          && typeof detail.z === 'number' && Number.isFinite(detail.z)) {
+          const radius = typeof detail.radius === 'number' && Number.isFinite(detail.radius)
+            ? detail.radius
+            : undefined;
+          this.runtime?.probeWorldNavigation({ x: detail.x, z: detail.z }, radius);
+        }
         return;
       }
       if (detail?.action !== 'cycle' || this.runtime === null) return;
