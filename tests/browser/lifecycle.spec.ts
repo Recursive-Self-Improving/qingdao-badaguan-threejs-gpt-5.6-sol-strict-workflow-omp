@@ -69,6 +69,10 @@ test('boots into accessible onboarding with transient busy scoped away from the 
   await expect(page.locator('#experience')).not.toHaveAttribute('aria-busy', 'true');
   await expect(page.locator('#app-overlay')).not.toHaveAttribute('aria-busy', 'true');
   await expect(page.locator('#app-canvas')).not.toHaveAttribute('tabindex', /.+/);
+  await page.getByTestId('start-button').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-app-state', 'exploring');
+  await expect(page.locator('#app-detail')).toHaveText(DRAG_COPY);
+  await expect(page.getByTestId('pause-button')).toBeVisible();
 });
 
 for (const key of ['Enter', 'Space'] as const) {
