@@ -1,7 +1,27 @@
 import { defineConfig } from '@playwright/test';
 
 const host = '127.0.0.1';
-const port = 4173;
+const defaultPort = 41_731;
+const portOverride = process.env.PLAYWRIGHT_PORT;
+
+function parsePort(value: string): number {
+  if (!/^[1-9]\d{0,4}$/.test(value)) {
+    throw new Error(
+      `Invalid PLAYWRIGHT_PORT "${value}": expected an integer from 1 to 65535.`,
+    );
+  }
+
+  const parsed = Number(value);
+  if (parsed > 65_535) {
+    throw new Error(
+      `Invalid PLAYWRIGHT_PORT "${value}": expected an integer from 1 to 65535.`,
+    );
+  }
+
+  return parsed;
+}
+
+const port = portOverride === undefined ? defaultPort : parsePort(portOverride);
 const baseURL = `http://${host}:${port}`;
 
 export default defineConfig({

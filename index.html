@@ -32,30 +32,70 @@
         </details>
       </header>
 
-      <main id="experience" class="experience" aria-labelledby="experience-title">
+      <main
+        id="experience"
+        class="experience"
+        aria-labelledby="experience-title"
+        aria-busy="true"
+      >
         <canvas
           id="app-canvas"
           aria-label="Badaguan landscape view"
-          aria-describedby="canvas-description"
+          aria-describedby="canvas-description app-detail app-notice app-control-guide"
         >
           Your browser cannot display the interactive canvas. Badaguan is a leafy, historic
           villa district on Qingdao’s southern coast, known for garden roads, varied low-rise
           architecture, sloping terrain, and framed views toward the sea.
         </canvas>
 
-        <section class="intro-panel" aria-labelledby="experience-title">
-          <p class="eyebrow">An early-autumn coastal walk</p>
-          <h2 id="experience-title">Explore a leafy district between hill and sea</h2>
-          <p id="canvas-description" class="lede">
-            Wander an interpretive landscape inspired by Badaguan’s tree-lined streets,
-            detached garden villas, gentle southern slope, and maritime morning haze.
-          </p>
-          <p id="app-status" class="status" role="status" aria-live="polite" aria-atomic="true">
-            Loading Badaguan…
-          </p>
-        </section>
+        <div class="interface-layer">
+          <section
+            id="app-overlay"
+            class="experience-panel"
+            aria-labelledby="experience-title"
+            data-testid="state-panel"
+          >
+            <p id="app-kicker" class="eyebrow">An early-autumn coastal walk</p>
+            <h2 id="experience-title">Preparing your Badaguan walk</h2>
+            <p id="canvas-description" class="lede">
+              Wander an interpretive landscape inspired by Badaguan’s tree-lined streets,
+              detached garden villas, gentle southern slope, and maritime morning haze.
+            </p>
+            <p id="app-detail" class="state-detail">
+              Checking this browser before the interactive landscape begins.
+            </p>
+            <div id="app-actions" class="primary-actions" aria-label="Experience actions"></div>
+            <p id="app-notice" class="state-notice" hidden></p>
+            <ul id="app-control-guide" class="control-guide" aria-label="Controls" hidden></ul>
+          </section>
 
-        <section id="app-controls" class="controls-region" aria-label="Experience controls"></section>
+          <section
+            id="app-help"
+            class="drawer-panel"
+            aria-labelledby="app-help-title"
+            data-testid="help-panel"
+            hidden
+          ></section>
+
+          <section
+            id="app-settings"
+            class="drawer-panel"
+            aria-labelledby="app-settings-title"
+            data-testid="settings-panel"
+            hidden
+          ></section>
+
+          <nav
+            id="app-controls"
+            class="controls-region"
+            aria-label="Experience controls"
+            hidden
+          ></nav>
+        </div>
+
+        <p id="app-status" class="status" role="status" aria-live="polite" aria-atomic="true">
+          Loading Badaguan…
+        </p>
       </main>
 
       <footer class="site-footer">
