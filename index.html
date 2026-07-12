@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="An interactive, interpretive walk through Qingdao Badaguan's leafy coastal villa district."
+    />
+    <meta name="theme-color" content="#173f40" />
+    <title>Qingdao Badaguan — Interactive Landscape</title>
+  </head>
+  <body>
+    <div id="app" class="app-shell" data-app-state="booting">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">Qingdao · Shandong, China</p>
+          <h1>Badaguan</h1>
+        </div>
+        <details class="about">
+          <summary>About</summary>
+          <p>
+            This experience is an artistic, non-geospatial interpretation of Badaguan’s
+            tree-lined roads, garden villas, sloping terrain, and coastal atmosphere—not an
+            exact historical reconstruction.
+          </p>
+        </details>
+      </header>
+
+      <main id="experience" class="experience" aria-labelledby="experience-title">
+        <canvas
+          id="app-canvas"
+          aria-label="Interactive view of Qingdao Badaguan"
+          aria-describedby="canvas-description"
+        >
+          Your browser cannot display the interactive canvas. Badaguan is a leafy, historic
+          villa district on Qingdao’s southern coast, known for garden roads, varied low-rise
+          architecture, sloping terrain, and framed views toward the sea.
+        </canvas>
+
+        <section class="intro-panel" aria-labelledby="experience-title">
+          <p class="eyebrow">An early-autumn coastal walk</p>
+          <h2 id="experience-title">Explore a leafy district between hill and sea</h2>
+          <p id="canvas-description" class="lede">
+            Wander an interpretive landscape inspired by Badaguan’s tree-lined streets,
+            detached garden villas, gentle southern slope, and maritime morning haze.
+          </p>
+          <p id="app-status" class="status" role="status" aria-live="polite" aria-atomic="true">
+            Preparing the experience shell…
+          </p>
+        </section>
+
+        <section
+          id="app-controls"
+          class="controls-region"
+          aria-label="Experience controls"
+          aria-live="polite"
+        ></section>
+      </main>
+
+      <footer class="site-footer">
+        <p>Interpretive landscape · No location data or personal information is collected.</p>
+      </footer>
+    </div>
+
+    <noscript>
+      <section class="no-script" aria-labelledby="no-script-title">
+        <h2 id="no-script-title">Badaguan, without the interactive view</h2>
+        <p>
+          JavaScript is disabled, so the 3D walk cannot start. You can still learn what this
+          experience represents: Qingdao Badaguan is a leafy coastal district of garden villas,
+          ten pass-named roads, varied low-rise architecture, sloping ground, and selective sea
+          views. This site presents an artistic interpretation rather than an exact survey.
+        </p>
+      </section>
+    </noscript>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

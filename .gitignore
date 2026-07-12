@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Production output
+dist/
+
+# Test and browser artifacts
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.vitest/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Tool caches and logs
+.vite/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating-system noise
+.DS_Store
+Thumbs.db
+desktop.ini

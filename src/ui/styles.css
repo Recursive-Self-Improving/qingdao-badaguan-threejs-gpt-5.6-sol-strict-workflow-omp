@@ -1,0 +1,301 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  color: #f5f1df;
+  background: #102f32;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  --edge-inline: max(1rem, env(safe-area-inset-left));
+  --edge-right: max(1rem, env(safe-area-inset-right));
+  --edge-top: max(1rem, env(safe-area-inset-top));
+  --edge-bottom: max(1rem, env(safe-area-inset-bottom));
+  --panel: rgb(12 40 42 / 82%);
+  --panel-border: rgb(235 226 190 / 24%);
+  --accent: #efd58b;
+  --focus: #fff1a8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100svh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 78% 12%, rgb(224 191 132 / 20%), transparent 34rem),
+    linear-gradient(155deg, #244f48 0%, #173f40 48%, #0b2931 100%);
+}
+
+button,
+summary,
+[tabindex]:not([tabindex="-1"]) {
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+}
+
+:focus-visible {
+  outline-color: var(--focus);
+  box-shadow: 0 0 0 5px rgb(16 47 50 / 70%);
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 100svh;
+  padding:
+    var(--edge-top)
+    var(--edge-right)
+    var(--edge-bottom)
+    var(--edge-inline);
+  overflow: hidden;
+}
+
+.app-shell::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(to bottom, rgb(8 28 31 / 4%) 45%, rgb(5 24 28 / 68%)),
+    repeating-linear-gradient(115deg, transparent 0 11rem, rgb(223 210 159 / 3%) 11rem 11.1rem);
+  content: "";
+  pointer-events: none;
+}
+
+.site-header,
+.site-footer {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.site-header h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.75rem, 5vw, 3rem);
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  line-height: 1;
+}
+
+.eyebrow {
+  margin: 0 0 0.3rem;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.about {
+  position: relative;
+  max-width: min(25rem, 52vw);
+}
+
+.about summary {
+  min-height: 2.75rem;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--panel);
+  cursor: pointer;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.about p {
+  position: absolute;
+  right: 0;
+  width: min(25rem, calc(100vw - 2rem));
+  margin: 0.5rem 0 0;
+  padding: 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.75rem;
+  background: rgb(8 31 34 / 96%);
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 28%);
+  font-size: 0.9rem;
+}
+
+.experience {
+  position: relative;
+  display: grid;
+  align-items: end;
+  min-height: 0;
+  margin-block: clamp(0.75rem, 3vh, 2rem);
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: clamp(0.75rem, 2vw, 1.25rem);
+  background:
+    linear-gradient(to top, rgb(5 25 29 / 90%), transparent 62%),
+    linear-gradient(145deg, #426b58 0%, #6f8064 42%, #51767b 72%, #b8a06d 100%);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 24%);
+}
+
+#app-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.intro-panel {
+  position: relative;
+  z-index: 2;
+  width: min(42rem, calc(100% - 2rem));
+  margin: clamp(1rem, 4vw, 2.5rem);
+  padding: clamp(1rem, 3vw, 1.5rem);
+  border: 1px solid var(--panel-border);
+  border-radius: 0.8rem;
+  background: var(--panel);
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 20%);
+  backdrop-filter: blur(10px);
+}
+
+.intro-panel h2 {
+  max-width: 18ch;
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.6rem, 4.2vw, 3.4rem);
+  font-weight: 500;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 58ch;
+  margin: 0.8rem 0;
+  color: #f1edda;
+  font-size: clamp(0.9rem, 1.6vw, 1.05rem);
+}
+
+.status {
+  margin: 0;
+  color: #d7e6d8;
+  font-size: 0.85rem;
+}
+
+.controls-region {
+  position: absolute;
+  z-index: 2;
+  right: 1rem;
+  bottom: 1rem;
+}
+
+.site-footer {
+  color: rgb(245 241 223 / 72%);
+  font-size: 0.75rem;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.no-script {
+  position: fixed;
+  z-index: 10;
+  inset: auto max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  max-width: 42rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.75rem;
+  background: #102f32;
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 36%);
+}
+
+.no-script h2,
+.no-script p {
+  margin-block: 0 0.5rem;
+}
+
+@media (max-width: 520px) {
+  .site-header {
+    align-items: flex-start;
+  }
+
+  .about {
+    max-width: 7rem;
+  }
+
+  .about p {
+    position: fixed;
+    top: calc(var(--edge-top) + 3.5rem);
+    right: var(--edge-right);
+    left: var(--edge-inline);
+    width: auto;
+  }
+
+  .experience {
+    margin-block: 0.65rem;
+  }
+
+  .intro-panel {
+    width: auto;
+    margin: 0.75rem;
+    padding: 0.9rem;
+  }
+
+  .intro-panel h2 {
+    font-size: clamp(1.45rem, 8vw, 2rem);
+  }
+
+  .lede {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+  }
+
+  .site-footer {
+    min-height: 1.8rem;
+    line-height: 1.3;
+  }
+}
+
+@media (max-height: 620px) {
+  .intro-panel {
+    padding-block: 0.75rem;
+  }
+
+  .intro-panel .lede {
+    margin-block: 0.45rem;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .about summary,
+  .intro-panel {
+    transition:
+      border-color 160ms ease,
+      background-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
