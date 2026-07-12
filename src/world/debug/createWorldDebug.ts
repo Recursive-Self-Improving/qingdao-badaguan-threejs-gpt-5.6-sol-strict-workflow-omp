@@ -44,6 +44,8 @@ const LABEL_SCREEN_SCALE_PER_PIXEL = (
   2 * Math.tan((APP_CONFIG.camera.fov * Math.PI) / 360)
 ) / EVIDENCE_CAPTURE_HEIGHT_PX;
 const STATIC_LABEL_COLLISION_GAP_PX = 6;
+const STATIC_LABEL_GEOMETRY_CLEARANCE_PX = 8;
+const STATIC_LABEL_MIN_TEXT_HEIGHT_PX = 12;
 const ROAD_LABEL_TARGET_WIDTH_PX = 184;
 const ROAD_LABEL_TARGET_HEIGHT_PX = 34;
 const ROAD_LABEL_SCREEN_WIDTH = ROAD_LABEL_TARGET_WIDTH_PX * LABEL_SCREEN_SCALE_PER_PIXEL;
@@ -124,15 +126,20 @@ const GRADE_TICK_HALF_WIDTH = 3.5;
 const COAST_SECTOR_OFFSET = 0.62;
 const COAST_SCREEN_POST_SPACING = 24;
 const COAST_LABEL_LEADER_ROAD_GAP_CLEARANCE = 2;
-const COAST_BAND_ID_TARGET_WIDTH_PX = 36;
-const COAST_BAND_ID_TARGET_HEIGHT_PX = 18;
+const COAST_BAND_ID_TARGET_WIDTH_PX = 64;
+const COAST_BAND_ID_TARGET_HEIGHT_PX = 30;
 const COAST_BAND_ID_SCREEN_WIDTH = COAST_BAND_ID_TARGET_WIDTH_PX
   * LABEL_SCREEN_SCALE_PER_PIXEL;
 const COAST_BAND_ID_SCREEN_HEIGHT = COAST_BAND_ID_TARGET_HEIGHT_PX
   * LABEL_SCREEN_SCALE_PER_PIXEL;
 const COAST_BAND_ID_ALTITUDE = 8;
-const COAST_BAND_ID_INLAND_OFFSET = 41;
+const COAST_BAND_SCREENED_ROW_INLAND_OFFSET = 54;
+const COAST_BAND_OPEN_ROW_INLAND_OFFSET = 111;
 const COAST_BAND_ID_PERSPECTIVE_X_SCALE = 0.9;
+const COAST_BAND_EAST_SCREENED_ROW_X_OUTSET = 38;
+const COAST_BAND_CENTER_OPEN_ROW_X_OFFSET = -48;
+const COAST_BAND_EAST_OPEN_ROW_X_INSET = 26;
+const COAST_BAND_LABEL_LEADER_OFFSET = COAST_SECTOR_OFFSET + 0.14;
 const COAST_BAND_SCREENED_LEGEND_TARGET_WIDTH_PX = 200;
 const COAST_BAND_OPEN_LEGEND_TARGET_WIDTH_PX = 240;
 const COAST_BAND_LEGEND_TARGET_HEIGHT_PX = 30;
@@ -143,13 +150,13 @@ const COAST_BAND_OPEN_LEGEND_SCREEN_WIDTH = COAST_BAND_OPEN_LEGEND_TARGET_WIDTH_
 const COAST_BAND_LEGEND_SCREEN_HEIGHT = COAST_BAND_LEGEND_TARGET_HEIGHT_PX
   * LABEL_SCREEN_SCALE_PER_PIXEL;
 const COAST_BAND_LEGEND_ALTITUDE = 8;
-const COAST_BAND_LEGEND_SOUTH_OUTSET = 36;
+const COAST_BAND_LEGEND_SOUTH_OUTSET = 40;
 const COAST_BAND_SCREENED_LEGEND_X_INSET = 80;
 const COAST_BAND_OPEN_LEGEND_X_INSET = 75;
 const COAST_BAND_ARROW_LENGTH = 6;
 const COAST_BAND_ARROW_WIDTH = 3;
 const GRADE_LABEL_FRACTION = 0.52;
-const GRADE_LABEL_LATERAL_OFFSET = 54;
+const GRADE_LABEL_LATERAL_OFFSET = 72;
 const SPAWN_MARKER_RADIUS = 1;
 const RESET_MARKER_RADIUS = 1.4;
 const CAMERA_MARKER_HALF_WIDTH = 0.45;
@@ -232,25 +239,29 @@ const SIGHTLINE_LABEL_CONFIG = {
   uphill: {
     text: '01  UPHILL AXIS  >>',
     fraction: 0.54,
-    lateralOffset: 30,
+    lateralOffset: 75,
+    longitudinalOffset: 0,
     borderColor: COLORS.sightlineUphill,
   },
   green: {
     text: '02  GREEN VIEW  >>',
-    fraction: 0.52,
-    lateralOffset: -24,
+    fraction: 0.5,
+    lateralOffset: -60,
+    longitudinalOffset: 364,
     borderColor: COLORS.sightlineGreen,
   },
   coast: {
     text: '03 SELECTIVE COAST CORRIDOR >>',
     fraction: 0.28,
     lateralOffset: 400,
+    longitudinalOffset: 0,
     borderColor: COLORS.sightlineCoast,
   },
 } as const satisfies Readonly<Record<SightlineSpec['theme'], {
   readonly text: string;
   readonly fraction: number;
   readonly lateralOffset: number;
+  readonly longitudinalOffset: number;
   readonly borderColor: number;
 }>>;
 
@@ -327,6 +338,34 @@ function appendTerrainRibbon(
     positions.push(...startLeft, ...endLeft, ...startRight);
     positions.push(...startRight, ...endLeft, ...endRight);
   }
+}
+
+function createRibbonFootprint(
+  from: Vec2,
+  to: Vec2,
+  halfWidth: number,
+): readonly [Vec2, Vec2, Vec2, Vec2] {
+  const deltaX = to.x - from.x;
+  const deltaZ = to.z - from.z;
+  const length = Math.hypot(deltaX, deltaZ);
+  if (length === 0) return [from, to, to, from];
+  const normalX = (-deltaZ / length) * halfWidth;
+  const normalZ = (deltaX / length) * halfWidth;
+  return [
+    { x: from.x + normalX, z: from.z + normalZ },
+    { x: to.x + normalX, z: to.z + normalZ },
+    { x: to.x - normalX, z: to.z - normalZ },
+    { x: from.x - normalX, z: from.z - normalZ },
+  ];
+}
+
+function createBoundsFootprint(bounds: Bounds2): readonly [Vec2, Vec2, Vec2, Vec2] {
+  return [
+    { x: bounds.minX, z: bounds.minZ },
+    { x: bounds.maxX, z: bounds.minZ },
+    { x: bounds.maxX, z: bounds.maxZ },
+    { x: bounds.minX, z: bounds.maxZ },
+  ];
 }
 function appendTerrainBoundsSurface(
   positions: number[],
@@ -545,14 +584,19 @@ function segmentLabelPosition(
   toward: Vec2,
   fraction: number,
   lateralOffset: number,
+  longitudinalOffset: number,
 ): Vec2 {
   const deltaX = toward.x - from.x;
   const deltaZ = toward.z - from.z;
   const length = Math.hypot(deltaX, deltaZ);
   if (length === 0) return { x: from.x, z: from.z };
+  const directionX = deltaX / length;
+  const directionZ = deltaZ / length;
   return {
-    x: from.x + deltaX * fraction - (deltaZ / length) * lateralOffset,
-    z: from.z + deltaZ * fraction + (deltaX / length) * lateralOffset,
+    x: from.x + deltaX * fraction
+      + directionX * longitudinalOffset - directionZ * lateralOffset,
+    z: from.z + deltaZ * fraction
+      + directionZ * longitudinalOffset + directionX * lateralOffset,
   };
 }
 
@@ -740,12 +784,33 @@ function createDebugLabel(
 }
 type StaticCaptureViewName = Exclude<WorldDebugViewName, 'grid'>;
 
-interface StaticProjectedLabel {
+interface StaticProjectedBounds {
   readonly name: string;
   readonly left: number;
   readonly right: number;
   readonly top: number;
   readonly bottom: number;
+}
+
+interface StaticProjectedLabel extends StaticProjectedBounds {
+  readonly textHeight: number;
+}
+
+interface StaticCaptureGeometrySpec {
+  readonly name: string;
+  readonly footprint: readonly Vec2[];
+  readonly altitude: number;
+}
+
+function staticProjectedBoundsSeparated(
+  first: StaticProjectedBounds,
+  second: StaticProjectedBounds,
+  clearance: number,
+): boolean {
+  return first.right + clearance <= second.left
+    || second.right + clearance <= first.left
+    || first.bottom + clearance <= second.top
+    || second.bottom + clearance <= first.top;
 }
 
 function createStaticCaptureCamera(view: StaticCaptureViewName): PerspectiveCamera {
@@ -780,6 +845,7 @@ function createStaticCaptureCamera(view: StaticCaptureViewName): PerspectiveCame
 function assertStaticCaptureLabelLayout(
   view: StaticCaptureViewName,
   specs: readonly DebugLabelSpec[],
+  geometrySpecs: readonly StaticCaptureGeometrySpec[] = [],
 ): void {
   const camera = createStaticCaptureCamera(view);
   const worldPosition = new Vector3();
@@ -791,17 +857,48 @@ function assertStaticCaptureLabelLayout(
     ).project(camera);
     const centerX = ((worldPosition.x + 1) * EVIDENCE_CAPTURE_WIDTH_PX) * 0.5;
     const centerY = ((1 - worldPosition.y) * EVIDENCE_CAPTURE_HEIGHT_PX) * 0.5;
+    const targetHeight = spec.screenHeight / LABEL_SCREEN_SCALE_PER_PIXEL;
     const halfWidth = (spec.screenWidth / LABEL_SCREEN_SCALE_PER_PIXEL) * 0.5;
-    const halfHeight = (spec.screenHeight / LABEL_SCREEN_SCALE_PER_PIXEL) * 0.5;
+    const halfHeight = targetHeight * 0.5;
     return {
       name: spec.name,
       left: centerX - halfWidth,
       right: centerX + halfWidth,
       top: centerY - halfHeight,
       bottom: centerY + halfHeight,
+      textHeight: targetHeight * ((spec.fontSize ?? 72) / LABEL_CANVAS_HEIGHT),
     };
   });
+  const projectedGeometry = geometrySpecs.map((geometry): StaticProjectedBounds => {
+    let left = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const point of geometry.footprint) {
+      worldPosition.set(
+        point.x,
+        sampleGroundHeight(point.x, point.z) + geometry.altitude,
+        point.z,
+      ).project(camera);
+      const x = ((worldPosition.x + 1) * EVIDENCE_CAPTURE_WIDTH_PX) * 0.5;
+      const y = ((1 - worldPosition.y) * EVIDENCE_CAPTURE_HEIGHT_PX) * 0.5;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+    }
+    if (!Number.isFinite(left) || !Number.isFinite(right)
+      || !Number.isFinite(top) || !Number.isFinite(bottom)) {
+      throw new Error(`Static ${view} geometry ${geometry.name} has no projection footprint.`);
+    }
+    return { name: geometry.name, left, right, top, bottom };
+  });
   for (const label of projected) {
+    if (label.textHeight < STATIC_LABEL_MIN_TEXT_HEIGHT_PX) {
+      throw new Error(
+        `Static ${view} label ${label.name} renders below ${STATIC_LABEL_MIN_TEXT_HEIGHT_PX}px text.`,
+      );
+    }
     if (label.left < 0 || label.right > EVIDENCE_CAPTURE_WIDTH_PX
       || label.top < 0 || label.bottom > EVIDENCE_CAPTURE_HEIGHT_PX) {
       throw new Error(`Static ${view} label ${label.name} falls outside 1246x552 capture.`);
@@ -813,13 +910,27 @@ function assertStaticCaptureLabelLayout(
     for (let secondIndex = firstIndex + 1; secondIndex < projected.length; secondIndex += 1) {
       const second = projected[secondIndex];
       if (second === undefined) continue;
-      const separated = first.right + STATIC_LABEL_COLLISION_GAP_PX <= second.left
-        || second.right + STATIC_LABEL_COLLISION_GAP_PX <= first.left
-        || first.bottom + STATIC_LABEL_COLLISION_GAP_PX <= second.top
-        || second.bottom + STATIC_LABEL_COLLISION_GAP_PX <= first.top;
+      const separated = staticProjectedBoundsSeparated(
+        first,
+        second,
+        STATIC_LABEL_COLLISION_GAP_PX,
+      );
       if (!separated) {
         throw new Error(
           `Static ${view} labels ${first.name} and ${second.name} collide at 1246x552.`,
+        );
+      }
+    }
+  }
+  for (const label of projected) {
+    for (const geometry of projectedGeometry) {
+      if (!staticProjectedBoundsSeparated(
+        label,
+        geometry,
+        STATIC_LABEL_GEOMETRY_CLEARANCE_PX,
+      )) {
+        throw new Error(
+          `Static ${view} label ${label.name} occludes ${geometry.name} at 1246x552.`,
         );
       }
     }
@@ -902,6 +1013,7 @@ function sightlineLabelLayout(sightline: SightlineSpec): SightlineLabelLayout {
       sightline.toward,
       config.fraction,
       config.lateralOffset,
+      config.longitudinalOffset,
     ),
   };
 }
@@ -980,8 +1092,16 @@ function appendElevatedLabelLeader(
     readonly before: Vec2;
     readonly after: Vec2;
   },
+  waypoints?: readonly Vec2[],
 ): void {
-  if (gap === undefined) {
+  if (waypoints !== undefined) {
+    let segmentFrom = anchor;
+    for (const waypoint of waypoints) {
+      appendTerrainLine(positions, segmentFrom, waypoint, groundOffset);
+      segmentFrom = waypoint;
+    }
+    appendTerrainLine(positions, segmentFrom, labelPosition, groundOffset);
+  } else if (gap === undefined) {
     appendTerrainLine(positions, anchor, labelPosition, groundOffset);
   } else {
     appendTerrainLine(positions, anchor, gap.before, groundOffset);
@@ -998,6 +1118,9 @@ function appendElevatedLabelLeader(
 
 function appendSightlineLabelLeader(positions: number[], sightline: SightlineSpec): void {
   const layout = sightlineLabelLayout(sightline);
+  const leaderWaypoints = sightline.theme === 'green'
+    ? [{ x: layout.anchor.x, z: layout.position.z }]
+    : undefined;
   let gap: { readonly before: Vec2; readonly after: Vec2 } | undefined;
   if (sightline.theme === 'coast') {
     const crossingRoad = ROAD_SPECS.find(({ id }) => id === 'wushengguan');
@@ -1024,6 +1147,7 @@ function appendSightlineLabelLeader(positions: number[], sightline: SightlineSpe
     SIGHTLINE_OFFSET + 0.12,
     STRUCTURE_LABEL_ALTITUDE,
     gap,
+    leaderWaypoints,
   );
 }
 
@@ -1257,6 +1381,7 @@ export function createWorldDebug(
   const ribbonMaterials = createDebugRibbonMaterials(resources, group);
   const publicGreenProjectionLabels: DebugLabelSpec[] = [];
   const sightlineProjectionLabels: DebugLabelSpec[] = [];
+  const sightlineProjectionGeometry: StaticCaptureGeometrySpec[] = [];
 
   const roadGridPositions: number[] = [];
   for (const road of ROAD_SPECS) {
@@ -1668,6 +1793,8 @@ export function createWorldDebug(
   const coastScreenedRibbonPositions: number[] = [];
   const coastOpenLinePositions: number[] = [];
   const coastOpenRibbonPositions: number[] = [];
+  const coastScreenedBandLabelLeaderPositions: number[] = [];
+  const coastOpenBandLabelLeaderPositions: number[] = [];
   const coastSectorLabelGroup = new Group();
   coastSectorLabelGroup.name = 'debug:coast-sector-labels';
 
@@ -1694,27 +1821,72 @@ export function createWorldDebug(
       ? coastScreenedRibbonPositions
       : coastOpenRibbonPositions;
     appendTerrainBoundsSurface(ribbonPositions, bandBounds, COAST_SECTOR_OFFSET - 0.05);
+    sightlineProjectionGeometry.push({
+      name: `debug:coast-band-ribbon:${band.id}`,
+      footprint: createBoundsFootprint(bandBounds),
+      altitude: COAST_SECTOR_OFFSET - 0.05,
+    });
     if (band.kind === 'screened') {
       appendCoastScreenSectorLines(coastScreenedLinePositions, band);
     } else {
       appendCoastOpenViewLines(coastOpenLinePositions, band.minX, band.maxX);
     }
+    const bandCenter = {
+      x: (band.minX + band.maxX) * 0.5,
+      z: (bandBounds.minZ + bandBounds.maxZ) * 0.5,
+    };
+    let bandLabelX = bandCenter.x * COAST_BAND_ID_PERSPECTIVE_X_SCALE;
+    if (band.kind === 'screened' && bandCenter.x > 0) {
+      bandLabelX += COAST_BAND_EAST_SCREENED_ROW_X_OUTSET;
+    } else if (band.kind === 'open' && bandCenter.x === 0) {
+      bandLabelX += COAST_BAND_CENTER_OPEN_ROW_X_OFFSET;
+    } else if (band.kind === 'open' && bandCenter.x > 0) {
+      bandLabelX -= COAST_BAND_EAST_OPEN_ROW_X_INSET;
+    }
+    const bandLabelPosition = {
+      x: bandLabelX,
+      z: DISTRICT_DATA.coast.screen.z - (band.kind === 'screened'
+        ? COAST_BAND_SCREENED_ROW_INLAND_OFFSET
+        : COAST_BAND_OPEN_ROW_INLAND_OFFSET),
+    };
+    appendElevatedLabelLeader(
+      band.kind === 'screened'
+        ? coastScreenedBandLabelLeaderPositions
+        : coastOpenBandLabelLeaderPositions,
+      bandCenter,
+      bandLabelPosition,
+      COAST_BAND_LABEL_LEADER_OFFSET,
+      COAST_BAND_ID_ALTITUDE,
+    );
     const bandLabelSpec: DebugLabelSpec = {
       name: `debug:coast-band-label:${band.id}`,
       text: band.id,
-      position: {
-        x: ((band.minX + band.maxX) * 0.5) * COAST_BAND_ID_PERSPECTIVE_X_SCALE,
-        z: DISTRICT_DATA.coast.screen.z - COAST_BAND_ID_INLAND_OFFSET,
-      },
+      position: bandLabelPosition,
       altitude: COAST_BAND_ID_ALTITUDE,
       screenWidth: COAST_BAND_ID_SCREEN_WIDTH,
       screenHeight: COAST_BAND_ID_SCREEN_HEIGHT,
       borderColor: band.kind === 'screened' ? COLORS.coastScreened : COLORS.coastOpen,
-      fontSize: 92,
+      fontSize: 104,
     };
     sightlineProjectionLabels.push(bandLabelSpec);
     coastSectorLabelGroup.add(createDebugLabel(resources, group, bandLabelSpec));
   }
+  coastSectorLabelGroup.add(
+    createLineObject(
+      resources,
+      group,
+      'debug:coast-screened-band-label-leaders',
+      coastScreenedBandLabelLeaderPositions,
+      materials.coastScreened,
+    ),
+    createLineObject(
+      resources,
+      group,
+      'debug:coast-open-band-label-leaders',
+      coastOpenBandLabelLeaderPositions,
+      materials.coastOpen,
+    ),
+  );
 
   const coastLegendZ = DISTRICT_DATA.coast.seaBounds.maxZ + COAST_BAND_LEGEND_SOUTH_OUTSET;
   const coastLegendSpecs: readonly DebugLabelSpec[] = [
@@ -1742,7 +1914,7 @@ export function createWorldDebug(
       screenWidth: COAST_BAND_OPEN_LEGEND_SCREEN_WIDTH,
       screenHeight: COAST_BAND_LEGEND_SCREEN_HEIGHT,
       borderColor: COLORS.coastOpen,
-      fontSize: 54,
+      fontSize: 58,
     },
   ];
   for (const coastLegendSpec of coastLegendSpecs) {
@@ -1846,6 +2018,26 @@ export function createWorldDebug(
       SIGHTLINE_CORRIDOR_HALF_WIDTH,
       SIGHTLINE_RIBBON_OFFSET,
     );
+    sightlineProjectionGeometry.push(
+      {
+        name: `debug:sightline-ribbon:${sightline.id}`,
+        footprint: createRibbonFootprint(
+          sightline.from,
+          sightline.toward,
+          SIGHTLINE_CORRIDOR_HALF_WIDTH,
+        ),
+        altitude: SIGHTLINE_RIBBON_OFFSET,
+      },
+      {
+        name: `debug:sightline-corridor:${sightline.id}`,
+        footprint: createRibbonFootprint(
+          sightline.from,
+          sightline.toward,
+          Math.max(SIGHTLINE_CORRIDOR_HALF_WIDTH, SIGHTLINE_ARROW_WIDTH),
+        ),
+        altitude: SIGHTLINE_OFFSET + 0.05,
+      },
+    );
     root.add(createRibbonObject(
       resources,
       group,
@@ -1879,7 +2071,11 @@ export function createWorldDebug(
   }
   root.add(sightlineLabelGroup);
   assertStaticCaptureLabelLayout('public-green', publicGreenProjectionLabels);
-  assertStaticCaptureLabelLayout('sightlines', sightlineProjectionLabels);
+  assertStaticCaptureLabelLayout(
+    'sightlines',
+    sightlineProjectionLabels,
+    sightlineProjectionGeometry,
+  );
 
   const spawnPositions: number[] = [];
   appendCross(

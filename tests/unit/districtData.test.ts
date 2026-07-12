@@ -255,8 +255,36 @@ describe('authored Badaguan district data', () => {
     }
     for (const footprint of DISTRICT_DATA.collisionFootprints) {
       expect(footprint.purpose).toBe('future-building');
-      expect(contains(DISTRICT_DATA.navigableBounds, { x: footprint.bounds.minX, z: footprint.bounds.minZ })).toBe(true);
-      expect(contains(DISTRICT_DATA.navigableBounds, { x: footprint.bounds.maxX, z: footprint.bounds.maxZ })).toBe(true);
+      const containingParcel = DISTRICT_DATA.parcels.find((parcel) => {
+        const setbackInterior = {
+          minX: parcel.bounds.minX + parcel.setback,
+          maxX: parcel.bounds.maxX - parcel.setback,
+          minZ: parcel.bounds.minZ + parcel.setback,
+          maxZ: parcel.bounds.maxZ - parcel.setback,
+        };
+        return contains(setbackInterior, { x: footprint.bounds.minX, z: footprint.bounds.minZ })
+          && contains(setbackInterior, { x: footprint.bounds.maxX, z: footprint.bounds.maxZ });
+      });
+      expect(containingParcel, `${footprint.id} must occupy a parcel setback interior`).toBeDefined();
+
+      for (const road of ROAD_SPECS) {
+        const padding = corridorPadding(road);
+        const expandedFootprint = {
+          minX: footprint.bounds.minX - padding,
+          maxX: footprint.bounds.maxX + padding,
+          minZ: footprint.bounds.minZ - padding,
+          maxZ: footprint.bounds.maxZ + padding,
+        };
+        const points = roadPoints(road);
+        expect(
+          points.slice(1).some((to, index) => segmentIntersectsBounds(
+            points[index] as Vec2,
+            to,
+            expandedFootprint,
+          )),
+          `${footprint.id} must stay outside the ${road.id} road and sidewalk corridor`,
+        ).toBe(false);
+      }
     }
   });
 

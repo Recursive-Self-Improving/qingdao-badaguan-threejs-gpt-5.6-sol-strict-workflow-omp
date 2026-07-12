@@ -293,12 +293,20 @@ test('clamps every boundary, slides collisions, preserves coast access, and samp
     expect(result.position.z).toBeLessThanOrEqual(38);
   }
 
-  const collision = await probeFromReset(page, { x: 50, z: -125 });
+  await visitAnchor(page, 'zhengyangguan-return');
+  const formerlyBlockedRoad = await probe(page, { x: 50, z: -125 });
+  expect(formerlyBlockedRoad.collided).toBe(false);
+  expect(formerlyBlockedRoad.position).toEqual({ x: 50, z: -125 });
+
+  await visitAnchor(page, 'zhengyangguan-return');
+  const collision = await probe(page, { x: 37, z: -102.5 });
   expect(collision.collided).toBe(true);
-  expect(collision.position).not.toEqual({ x: 50, z: -125 });
-  const insideCentralFootprint = collision.position.x > 30 && collision.position.x < 78 &&
-    collision.position.z > -145 && collision.position.z < -105;
-  expect(insideCentralFootprint).toBe(false);
+  expect(collision.position).not.toEqual({ x: 37, z: -102.5 });
+  expect(collision.position.x).toBe(37);
+  expect(collision.position.z).toBe(-125);
+  const insideCentralWestFootprint = collision.position.x > 24 && collision.position.x < 50
+    && collision.position.z > -105 && collision.position.z < -100;
+  expect(insideCentralWestFootprint).toBe(false);
 
   const coast = await probeFromReset(page, { x: 0, z: 37 });
   expect(coast.collided).toBe(false);
