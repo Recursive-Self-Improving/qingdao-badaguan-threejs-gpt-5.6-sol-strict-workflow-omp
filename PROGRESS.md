@@ -165,7 +165,7 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 - **PLAN review surface:** scale, route continuity, road count/names, slope, parcels/setbacks, collision simplification, selective coastal exposure. No villa detail review.
   - **Implementation-review evidence:** pending
 - **Planned commit boundary:** `feat: construct the navigable Badaguan district`
-- **Implementation commit hash(es):** pending
+- **Implementation commit hash(es):** `2ce8704` (draft implementation commit)
 - **Append-only implementation review and fix/re-review rounds:**
 
 | Round | Finding IDs | Review/fix evidence | Commit | Reviewer/date | Result (`clean` or new finding IDs) |
