@@ -8,6 +8,7 @@ import {
 import { detectCapabilities, type CapabilityDetectionOptions } from '../platform/capabilities';
 import { detectPreferences } from '../platform/preferences';
 import { createAppUI, type AppUI, type AppUIAction } from '../ui/AppUI';
+import { ThreeRuntime } from '../render/ThreeRuntime';
 
 type DevelopmentScenario =
   | 'unsupported'
@@ -52,6 +53,9 @@ export class AppController {
   private readonly scenario: DevelopmentScenario | null;
   private readonly capabilityOptions: CapabilityDetectionOptions | undefined;
   private readonly ui: AppUI;
+  private runtime: ThreeRuntime | null = null;
+  private destroyed = false;
+  private developmentRuntimeCleanup: (() => void) | null = null;
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || event.defaultPrevented) {
       return;
@@ -78,12 +82,18 @@ export class AppController {
   start(): void {
     this.render();
     window.addEventListener('keydown', this.onKeyDown);
+    if (import.meta.env.DEV) this.installDevelopmentRuntimeSurface();
     this.dispatch({ type: 'BOOT' });
     this.evaluateCapabilities();
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     window.removeEventListener('keydown', this.onKeyDown);
+    this.developmentRuntimeCleanup?.();
+    this.developmentRuntimeCleanup = null;
+    this.disposeRuntime();
     this.ui.destroy();
   }
 
@@ -91,6 +101,7 @@ export class AppController {
     if (action.type === 'RETRY') {
       const retry = this.dispatch(action);
       if (retry) {
+        this.disposeRuntime();
         this.evaluateCapabilities();
       }
       return;
@@ -112,6 +123,7 @@ export class AppController {
       return;
     }
 
+    if (!this.createRuntime()) return;
     this.dispatch({ type: 'CAPABILITY_SUPPORTED' });
     this.applyPostCapabilityScenario();
   }
@@ -155,6 +167,51 @@ export class AppController {
       default:
         break;
     }
+  }
+
+  private installDevelopmentRuntimeSurface(): void {
+    if (!import.meta.env.DEV) return;
+    const eventName = 'three-runtime:command';
+    const listener = (event: Event): void => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail = event.detail as { action?: unknown; count?: unknown } | null;
+      if (detail?.action === 'rebuild') {
+        this.runtime?.rebuildScene();
+        return;
+      }
+      if (detail?.action !== 'cycle' || this.runtime === null) return;
+      const requestedCount = typeof detail.count === 'number' ? Math.floor(detail.count) : 10;
+      const count = Math.min(100, Math.max(1, requestedCount));
+      for (let index = 0; index < count; index += 1) {
+        this.disposeRuntime();
+        if (!this.createRuntime()) break;
+      }
+    };
+    document.addEventListener(eventName, listener);
+    this.developmentRuntimeCleanup = () => document.removeEventListener(eventName, listener);
+  }
+
+  private createRuntime(): boolean {
+    if (this.destroyed || this.runtime !== null) return this.runtime !== null;
+    const canvas = document.querySelector<HTMLCanvasElement>('#app-canvas');
+    if (canvas === null) {
+      this.dispatch({ type: 'FATAL', reason: 'The graphics canvas is unavailable.' });
+      return false;
+    }
+
+    try {
+      this.runtime = new ThreeRuntime(canvas);
+      return true;
+    } catch {
+      this.disposeRuntime();
+      this.dispatch({ type: 'FATAL', reason: 'The graphics runtime could not be created.' });
+      return false;
+    }
+  }
+
+  private disposeRuntime(): void {
+    this.runtime?.dispose();
+    this.runtime = null;
   }
 
   private dispatch(event: AppEvent): boolean {

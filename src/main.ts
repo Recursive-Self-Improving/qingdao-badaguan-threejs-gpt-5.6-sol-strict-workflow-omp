@@ -26,3 +26,4 @@ function readDevelopmentConfig(location: Location): AppControllerConfig {
 
 const controller = new AppController(window.location, readDevelopmentConfig(window.location));
 controller.start();
+window.addEventListener('pagehide', () => controller.destroy(), { once: true });

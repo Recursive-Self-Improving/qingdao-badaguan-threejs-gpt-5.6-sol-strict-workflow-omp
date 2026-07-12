@@ -109,19 +109,19 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 
 ## C03 — Build the renderer, camera, resize, and resource lifecycle
 
-- **Status:** `not started`
-- **Session/date:** pending
+- **Status:** `in progress`
+- **Session/date:** 2026-07-12
 - **Dependencies:** C02 complete
-- [ ] Implement renderer creation, linear color workflow, camera defaults, the visibility-aware animation loop, fixed-step-safe frame timing, and lifecycle disposal.
-  - **Implementation evidence:** pending
-- [ ] Implement CSS-size-driven drawing-buffer resizing, camera projection updates, VisualViewport handling, and explicit DPR/pixel-count caps.
-  - **Implementation evidence:** pending
-- [ ] Implement shared resource ownership and deterministic scene teardown/rebuild hooks required for quality changes and context restoration.
-  - **Implementation evidence:** pending
+- [x] Implement renderer creation, linear color workflow, camera defaults, the visibility-aware animation loop, fixed-step-safe frame timing, and lifecycle disposal.
+  - **Implementation evidence:** `src/render/ThreeRuntime.ts:59-201` owns renderer/scene/camera setup, enables `ColorManagement`, configures sRGB output plus ACES tone mapping, publishes runtime metrics, pauses/resumes the animation loop on document visibility, and disposes listeners, animation loop, clock, viewport, scene resources, and renderer; `src/render/frameClock.ts:1-102` establishes a first-sample baseline, clamps each accepted delta to the 0.1-second default, drops paused/hidden time, rejects bad timestamp samples, and provides idempotent terminal disposal; `src/app/AppController.ts:82-215` creates and disposes the runtime and installs the development-only lifecycle surface.
+- [x] Implement CSS-size-driven drawing-buffer resizing, camera projection updates, VisualViewport handling, and explicit DPR/pixel-count caps.
+  - **Implementation evidence:** `src/platform/viewport.ts:1-178` computes from canvas CSS client dimensions, caps device pixel ratio at 2 and drawing-buffer pixels at 4,100,000, floors the resulting buffer dimensions, updates renderer size/pixel ratio and camera projection, and subscribes/unsubscribes to `ResizeObserver`, window resize, and `VisualViewport` resize/scroll; `src/render/ThreeRuntime.ts:92-116` constructs the fixed camera and starts the observer.
+- [x] Implement shared resource ownership and deterministic scene teardown/rebuild hooks required for quality changes and context restoration.
+  - **Implementation evidence:** `src/render/ResourceRegistry.ts:1-192` implements grouped register/acquire/release ownership, final-owner disposal, rebuild-group disposal, idempotent dispose-all, snapshots/counts, and aggregate disposal errors; `src/render/ThreeRuntime.ts:149-186` deterministically clears and rebuilds the neutral scene and disposes the full runtime; `src/app/AppController.ts:172-215` exposes development-only rebuild and bounded dispose/create-cycle hooks that replace runtimes through the same teardown path.
 - **PLAN acceptance contract:** neutral scene renders with correct aspect at every matrix viewport; actual drawing buffer obeys selected pixel cap; hidden/resumed tab has no large delta; repeated create/dispose returns resource counts to baseline; camera begins upright with fixed defaults.
-  - **Acceptance evidence (every clause):** pending
+  - **Acceptance evidence (every clause):** Neutral scene/aspect: parent `npm run test:browser -- viewport.spec.ts` passed 46/46 in 19.7s, covering `tests/browser/viewport.spec.ts:82-123` at 320×568 and 1920×1080 plus resize without runtime recreation; durable manual neutral capture is `local://c03-evidence/c03-neutral-1280x720.png`, with canvas CSS/buffer metrics 1246×552 and camera aspect 2.2572. Drawing-buffer cap: manual 1920×1080 emulated-DPR-3 measurement was CSS 1886×892, effective DPR 1.5611, buffer 2944×1392 = 4,098,048 pixels, within the 4,100,000 cap; the browser assertions at `tests/browser/viewport.spec.ts:75-79,125-149` also enforce both ratio and pixel limits. Hidden/resumed timing: `tests/browser/viewport.spec.ts:162-236` proved the loop stopped while hidden, the frame count stayed frozen for 250ms, and the first resumed delta was ≤0.1s; the focused frame-clock unit coverage proves the fresh-baseline invariant. Repeated teardown/rebuild: `tests/browser/viewport.spec.ts:238-261` proved ten dispose/create cycles leave one live runtime and stable resource counts; the 1280×720 manual metrics reported resources 2, references 2, groups 1. Upright camera defaults: manual metrics reported fov 50, near 0.1, far 100, position [0,1.5,5], up [0,1,0], with the runtime running and visible; `tests/browser/viewport.spec.ts:151-160` asserts the same fixed values.
 - **PLAN focused verification contract:** `npm run test:unit -- frameClock`; `npm run test:browser -- viewport.spec.ts`; manually resize 320×568 → 1920×1080 at DPR 1 and emulated DPR 3; hide/resume tab; run ten runtime create/dispose cycles through a test hook.
-  - **Focused-verification evidence (every command/scenario):** pending
+  - **Focused-verification evidence (every command/scenario):** Parent `npm run test:unit -- frameClock` passed 1 file/9 tests. Resource ownership unit coverage in `tests/unit/resourceRegistry.test.ts` passed 1 file/4 tests, including shared final-owner disposal, rebuild-group release, idempotent dispose-all, and cleanup after a throwing disposer. Parent `npm run test:browser -- viewport.spec.ts` passed 46/46 in 19.7s after the visibility fix. Manual viewport/DPR evidence: at 320×568 DPR1, CSS and drawing buffer were 294×417 with aspect 0.7050; at 1920×1080 emulated DPR3, CSS was 1886×892, effective DPR 1.5611, buffer 2944×1392 (4,098,048 pixels, ≤4.1M), aspect 2.11435, and the post-resume delta was clamped to 0.1; the 1280×720 neutral capture is durable at `local://c03-evidence/c03-neutral-1280x720.png`. The visibility scenario stopped and froze the frame count over 250ms while hidden, then resumed with a bounded first delta; the development test hook executed ten create/dispose cycles and returned to one live runtime with stable resources. Parent `npm run typecheck` passed with `artifact://380`. Parent final `npm run build` passed with `artifact://385`; its only noted warning was the nonfatal single-chunk size warning over 500k. Production `dist` grep found no `three-runtime:command`, `data-three-runtime-metrics`, or runtime-cycle/rebuild strings.
 - **PLAN review surface:** ownership/disposal, resize arithmetic, color-space settings, camera clipping, animation-loop and visibility behavior.
   - **Implementation-review evidence:** pending
 - **Planned commit boundary:** `feat: establish the Three.js rendering lifecycle`
@@ -479,7 +479,7 @@ This register may document only a non-complete `blocked` or `deferred by explici
 ### Closure record
 
 - **Overall status:** `in progress`
-- **Canonical implementation tasks checked:** 6/36
+- **Canonical implementation tasks checked:** 9/36
 - **Final-review tasks checked:** 0/5
 - **Chunks complete in strict sequence:** 2/12
 - **All 12 acceptance contracts fully evidenced:** no
