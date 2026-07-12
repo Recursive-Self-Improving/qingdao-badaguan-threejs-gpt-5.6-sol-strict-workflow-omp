@@ -11,12 +11,12 @@ import {
   WebGLRenderer,
   type Object3D,
 } from 'three';
+import { APP_CONFIG } from '../app/config';
 import { ViewportObserver, type ViewportMeasurement } from '../platform/viewport';
 import { FrameClock } from './frameClock';
 import { ResourceRegistry, type ResourceRegistryCounts } from './ResourceRegistry';
 
 const NEUTRAL_RESOURCE_GROUP_PREFIX = 'neutral-scene';
-const CAMERA_POSITION = [0, 1.5, 5] as const;
 
 export interface ThreeRuntimeFrame {
   readonly deltaSeconds: number;
@@ -37,6 +37,7 @@ export interface ThreeRuntimeMetrics {
     readonly far: number;
     readonly position: readonly [number, number, number];
     readonly up: readonly [number, number, number];
+    readonly roll: number;
   };
   readonly frame: {
     readonly deltaSeconds: number;
@@ -83,7 +84,12 @@ const DEFAULT_DEPENDENCIES: ThreeRuntimeDependencies = {
     powerPreference: 'high-performance',
   }),
   createScene: () => new Scene(),
-  createCamera: () => new PerspectiveCamera(50, 1, 0.1, 100),
+  createCamera: () => new PerspectiveCamera(
+    APP_CONFIG.camera.fov,
+    1,
+    APP_CONFIG.camera.near,
+    APP_CONFIG.camera.far,
+  ),
   createClock: () => new FrameClock(),
   createResources: () => new ResourceRegistry(),
   createViewport: (canvas, renderer, camera, onChange) =>
@@ -221,6 +227,7 @@ export class ThreeRuntime {
         far: this.camera.far,
         position: [position.x, position.y, position.z],
         up: [up.x, up.y, up.z],
+        roll: this.camera.rotation.z,
       },
       frame: {
         deltaSeconds: this.lastDeltaSeconds,
@@ -296,9 +303,10 @@ export class ThreeRuntime {
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
     this.scene.background = new Color(0x7d898b);
-    this.camera.position.set(...CAMERA_POSITION);
-    this.camera.up.set(0, 1, 0);
-    this.camera.lookAt(0, 0, 0);
+    this.camera.position.set(0, APP_CONFIG.camera.eyeHeight, APP_CONFIG.camera.neutralZ);
+    this.camera.up.set(...APP_CONFIG.camera.worldUp);
+    this.camera.lookAt(0, APP_CONFIG.camera.eyeHeight, 0);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
   }
 
   private installNeutralScene(): void {

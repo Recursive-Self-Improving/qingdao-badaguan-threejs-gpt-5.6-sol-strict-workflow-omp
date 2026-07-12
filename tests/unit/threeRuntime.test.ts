@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { Object3D, PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 
+import { APP_CONFIG } from '../../src/app/config';
 import { AppController, installPageHideHandler } from '../../src/app/AppController';
 import {
   ThreeRuntime,
@@ -50,7 +51,12 @@ function dependencies(
   return {
     createRenderer: () => renderer as unknown as WebGLRenderer,
     createScene: () => new Scene(),
-    createCamera: () => new PerspectiveCamera(50, 1, 0.1, 100),
+    createCamera: () => new PerspectiveCamera(
+      APP_CONFIG.camera.fov,
+      1,
+      APP_CONFIG.camera.near,
+      APP_CONFIG.camera.far,
+    ),
     createViewport: () => viewport,
     buildNeutralScene,
   };
@@ -172,10 +178,31 @@ describe('ThreeRuntime lifecycle safety', () => {
     const renderer = createRenderer();
     const viewport = createViewport();
     const resourceDispose = vi.fn();
-    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, (resources, group) => {
-      resources.register(disposable(resourceDispose), group);
-      return new Object3D();
-    }));
+    const injected = (({ createCamera: _createCamera, ...rest }) => rest)(dependencies(
+      renderer,
+      viewport,
+      (resources, group) => {
+        resources.register(disposable(resourceDispose), group);
+        return new Object3D();
+      },
+    ));
+    const runtime = new ThreeRuntime(canvas, {}, injected);
+
+    expect(APP_CONFIG.camera).toEqual({
+      fov: 65,
+      near: 0.08,
+      far: 550,
+      eyeHeight: 1.68,
+      neutralZ: 5,
+      worldUp: [0, 1, 0],
+      roll: 0,
+    });
+    expect(runtime.camera.fov).toBe(65);
+    expect(runtime.camera.near).toBe(0.08);
+    expect(runtime.camera.far).toBe(550);
+    expect(runtime.camera.position.toArray()).toEqual([0, 1.68, 5]);
+    expect(runtime.camera.up.toArray()).toEqual([0, 1, 0]);
+    expect(runtime.camera.rotation.z).toBe(0);
 
     runtime.dispose();
     runtime.dispose();

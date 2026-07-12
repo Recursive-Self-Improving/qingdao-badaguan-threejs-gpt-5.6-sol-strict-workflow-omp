@@ -20,6 +20,7 @@ interface RuntimeMetrics {
     far: number;
     position: [number, number, number];
     up: [number, number, number];
+    roll: number;
   };
   frame: {
     deltaSeconds: number;
@@ -166,11 +167,12 @@ test('starts with fixed upright camera defaults', async ({ page }) => {
   await page.goto(SUPPORTED_URL);
   const value = await waitForMetrics(page);
 
-  expect(value.camera.fov).toBe(50);
-  expect(value.camera.near).toBe(0.1);
-  expect(value.camera.far).toBe(100);
-  expect(value.camera.position).toEqual([0, 1.5, 5]);
+  expect(value.camera.fov).toBe(65);
+  expect(value.camera.near).toBe(0.08);
+  expect(value.camera.far).toBe(550);
+  expect(value.camera.position).toEqual([0, 1.68, 5]);
   expect(value.camera.up).toEqual([0, 1, 0]);
+  expect(value.camera.roll).toBe(0);
 });
 
 test('freezes while hidden then resumes with a fresh baseline and normal cadence', async ({ page }) => {

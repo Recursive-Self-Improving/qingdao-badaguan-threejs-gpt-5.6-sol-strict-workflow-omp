@@ -20,4 +20,13 @@ export const APP_CONFIG = {
   placeName: 'Badaguan',
   lockedInstruction: APP_COPY.exploringLocked,
   fallbackInstruction: APP_COPY.exploringDrag,
+  camera: {
+    fov: 65,
+    near: 0.08,
+    far: 550,
+    eyeHeight: 1.68,
+    neutralZ: 5,
+    worldUp: [0, 1, 0] as const,
+    roll: 0,
+  },
 } as const;
