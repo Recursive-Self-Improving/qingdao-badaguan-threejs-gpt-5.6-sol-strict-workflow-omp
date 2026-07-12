@@ -12,7 +12,16 @@ import { ViewportObserver, type ViewportMeasurement } from '../platform/viewport
 import { FrameClock } from './frameClock';
 import { ResourceRegistry, type ResourceRegistryCounts } from './ResourceRegistry';
 import { createWorld } from '../world/createWorld';
-import type { Bounds2, NavigationResult, RouteAnchor, Vec2, WorldBuildResult, WorldDebugViewName } from '../world/types';
+import type {
+  ArchitectureFrameView,
+  ArchitectureSubjectId,
+  Bounds2,
+  NavigationResult,
+  RouteAnchor,
+  Vec2,
+  WorldBuildResult,
+  WorldDebugViewName,
+} from '../world/types';
 
 const WORLD_RESOURCE_GROUP_PREFIX = 'world';
 
@@ -52,6 +61,13 @@ export interface ThreeRuntimeMetrics {
     readonly renders: number;
   };
   readonly world: WorldRuntimeMetrics;
+}
+
+export interface ActiveArchitectureFrame {
+  readonly subjectId: ArchitectureSubjectId;
+  readonly view: ArchitectureFrameView;
+  readonly rendererCalls: number;
+  readonly rendererTriangles: number;
 }
 
 export interface WorldRuntimeMetrics {
@@ -114,10 +130,18 @@ export interface WorldRuntimeMetrics {
     readonly lastProbe: WorldNavigationProbe | null;
     readonly activeView: WorldDebugViewName | null;
   };
+  readonly architecture?: {
+    readonly subjects: WorldBuildResult['architecture']['subjects'];
+    readonly reuse: WorldBuildResult['architecture']['reuse'];
+    readonly labelsVisible: false;
+    readonly renderInfo: { readonly calls: number; readonly triangles: number };
+    readonly activeFrame: ActiveArchitectureFrame | null;
+  };
 }
 
 
 export interface WorldNavigationProbe extends NavigationResult {
+  readonly start: Vec2;
   readonly requested: Vec2;
 }
 
@@ -202,6 +226,7 @@ export class ThreeRuntime {
   private activeWorld: WorldBuildResult | null = null;
   private lastProbe: WorldNavigationProbe | null = null;
   private lastWorldMetrics: WorldRuntimeMetrics | null = null;
+  private activeArchitectureFrame: ActiveArchitectureFrame | null = null;
   private lastDeltaSeconds = 0;
   private disposed = false;
   private loopRunning = false;
@@ -351,8 +376,7 @@ export class ThreeRuntime {
 
     this.activeResourceGroup = nextGroup;
     this.activeWorld = nextWorld;
-    this.lastProbe = null;
-    nextWorld.debug.setView(null);
+    this.resetDevelopmentFraming(nextWorld);
     this.sceneGeneration += 1;
     this.rebuildCount += 1;
     const cleanupErrors: unknown[] = [];
@@ -367,13 +391,56 @@ export class ThreeRuntime {
 
   setWorldDebugVisible(visible: boolean): void {
     if (!import.meta.env.DEV || this.disposed) return;
+    this.activeArchitectureFrame = null;
     this.activeWorld?.debug.setVisible(visible);
     if (!visible) this.activeWorld?.debug.setView(null);
     this.publishDevelopmentMetrics();
   }
 
+  frameArchitecture(subjectId: string, view: ArchitectureFrameView): ActiveArchitectureFrame | null {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
+    if (!Object.prototype.hasOwnProperty.call(this.activeWorld.architecture.cameraViews, subjectId)) return null;
+    const typedSubjectId = subjectId as ArchitectureSubjectId;
+    const subjectViews = this.activeWorld.architecture.cameraViews[typedSubjectId];
+    if (!Object.prototype.hasOwnProperty.call(subjectViews, view)) return null;
+    const cameraView = subjectViews[view];
+    if (cameraView.ySemantics !== 'site-ground-relative') return null;
+    const site = this.activeWorld.data.architectureSites.find(({ id }) => id === typedSubjectId);
+    if (site === undefined) return null;
+    this.activeWorld.debug.setVisible(false);
+    this.activeWorld.debug.setView(null);
+    this.lastProbe = null;
+    const groundHeight = this.activeWorld.navigation.sampleGroundHeight(
+      cameraView.target[0],
+      cameraView.target[2],
+    );
+    this.camera.position.set(
+      cameraView.position[0],
+      groundHeight + cameraView.position[1],
+      cameraView.position[2],
+    );
+    this.camera.lookAt(
+      cameraView.target[0],
+      groundHeight + cameraView.target[1],
+      cameraView.target[2],
+    );
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
+    const renderer = this.rendererMetrics();
+    this.activeArchitectureFrame = Object.freeze({
+      subjectId: typedSubjectId,
+      view,
+      rendererCalls: renderer.calls,
+      rendererTriangles: renderer.triangles,
+    });
+    this.publishDevelopmentMetrics();
+    return this.activeArchitectureFrame;
+  }
+
   visitWorldAnchor(anchorId: string): RouteAnchor | null {
     if (!import.meta.env.DEV || this.disposed) return null;
+    this.activeArchitectureFrame = null;
     const anchor = this.activeWorld?.debug.visitAnchor(anchorId) ?? null;
     this.activeWorld?.debug.setView(null);
     if (anchor !== null) this.moveCameraTo(anchor.position);
@@ -381,15 +448,21 @@ export class ThreeRuntime {
     return anchor;
   }
 
-  probeWorldNavigation(requested: Vec2, radius?: number): WorldNavigationProbe | null {
+  probeWorldNavigation(requested: Vec2, radius?: number, from?: Vec2): WorldNavigationProbe | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
-    const previous = { x: this.camera.position.x, z: this.camera.position.z };
+    this.activeArchitectureFrame = null;
+    const validFrom = from !== undefined
+      && Number.isFinite(from.x)
+      && Number.isFinite(from.z);
+    const start = validFrom
+      ? { x: from.x, z: from.z }
+      : { x: this.camera.position.x, z: this.camera.position.z };
     const result = this.activeWorld.navigation.resolve(
-      previous,
+      start,
       requested,
       radius === undefined ? undefined : { radius },
     );
-    this.lastProbe = { requested: { ...requested }, ...result };
+    this.lastProbe = { start: Object.freeze({ ...start }), requested: { ...requested }, ...result };
     this.activeWorld.debug.setView(null);
     this.moveCameraTo(result.position);
     this.publishDevelopmentMetrics();
@@ -397,6 +470,7 @@ export class ThreeRuntime {
   }
   frameWorldDebugView(name: WorldDebugViewName): void {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return;
+    this.activeArchitectureFrame = null;
     const { data, debug, navigation } = this.activeWorld;
     debug.setVisible(true);
     if (name === 'grid') {
@@ -451,6 +525,7 @@ export class ThreeRuntime {
       this.scene.add(world.root);
       this.activeWorld = world;
       const spawn = world.navigation.spawn;
+      this.resetDevelopmentFraming(world);
       this.camera.position.set(
         spawn.x,
         world.navigation.sampleGroundHeight(spawn.x, spawn.z) + APP_CONFIG.camera.eyeHeight,
@@ -483,6 +558,7 @@ export class ThreeRuntime {
     this.runCleanupStage(errors, () => this.viewport.dispose());
     this.runCleanupStage(errors, () => this.clock.dispose());
     this.runCleanupStage(errors, () => this.activeWorld?.debug.setView(null));
+    this.activeArchitectureFrame = null;
     this.runCleanupStage(errors, () => {
       this.lastWorldMetrics = this.worldMetrics();
     });
@@ -529,7 +605,7 @@ export class ThreeRuntime {
   private worldMetrics(): WorldRuntimeMetrics {
     const world = this.activeWorld;
     if (world === null) throw new Error('World metrics requested without an active world.');
-    const { data, debug, navigation } = world;
+    const { data, debug, navigation, architecture } = world;
     const transverseCount = data.roads.filter((road) => road.orientation === 'east-west').length;
     const longitudinalCount = data.roads.length - transverseCount;
     return {
@@ -586,7 +662,30 @@ export class ThreeRuntime {
         lastProbe: this.lastProbe,
         activeView: debug.currentView,
       },
+      ...(import.meta.env.DEV ? {
+        architecture: {
+          subjects: architecture.subjects,
+          reuse: architecture.reuse,
+          labelsVisible: architecture.labelsVisible,
+          renderInfo: this.rendererMetrics(),
+          activeFrame: this.activeArchitectureFrame,
+        },
+      } : {}),
     };
+  }
+
+  private resetDevelopmentFraming(world: WorldBuildResult): void {
+    this.lastProbe = null;
+    this.activeArchitectureFrame = null;
+    world.debug.setView(null);
+    world.debug.setVisible(false);
+  }
+
+  private rendererMetrics(): { readonly calls: number; readonly triangles: number } {
+    return Object.freeze({
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+    });
   }
 
   private runCleanupStage(errors: unknown[], stage: () => void): void {

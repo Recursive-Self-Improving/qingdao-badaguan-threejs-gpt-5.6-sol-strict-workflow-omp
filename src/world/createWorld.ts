@@ -5,6 +5,9 @@ import { DISTRICT_DATA } from './districtData';
 import { createStreetNetwork } from './streets/createStreetNetwork';
 import { createTerrain, sampleGroundHeight } from './terrain/createTerrain';
 import { createWorldDebug } from './debug/createWorldDebug';
+import { createVillaKit } from './architecture/villaKit';
+import { createVillaDistrict } from './architecture/createVillas';
+import { createLandmarks } from './architecture/createLandmarks';
 import type { WorldBuildResult } from './types';
 
 
@@ -13,12 +16,18 @@ export function createWorld(resources: ResourceRegistry, group: string): WorldBu
   root.name = 'badaguan-district';
   root.add(createTerrain(resources, group));
   root.add(createStreetNetwork(resources, group));
+  const villaKit = createVillaKit(resources, group);
+  createVillaDistrict(villaKit, DISTRICT_DATA.architectureSites);
+  createLandmarks(villaKit, DISTRICT_DATA.architectureSites);
+  const architecture = villaKit.finalize();
+  root.add(architecture.root);
   const debug = createWorldDebug(resources, group);
   root.add(debug.root);
   return Object.freeze({
     root,
     data: DISTRICT_DATA,
     debug,
+    architecture,
     navigation: Object.freeze({
       resolve: resolveNavigation,
       sampleGroundHeight,

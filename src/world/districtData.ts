@@ -1,5 +1,6 @@
 import type {
   DistrictData,
+  ArchitectureSite,
   LandmarkAnchor,
   LineSegment,
   RoadSpec,
@@ -88,6 +89,136 @@ const authoredLandmarkAnchors: readonly LandmarkAnchor[] = authoredAnchors.filte
   (anchor): anchor is LandmarkAnchor => anchor.kind === 'landmark',
 );
 
+type CameraViewOverrides = Partial<ArchitectureSite['cameraViews']>;
+
+const cameraViews = (
+  bounds: ArchitectureSite['siteBounds'],
+  height: number,
+  routePosition: RouteAnchor['position'],
+  overrides: CameraViewOverrides = {},
+): ArchitectureSite['cameraViews'] => {
+  const x = (bounds.minX + bounds.maxX) * 0.5;
+  const z = (bounds.minZ + bounds.maxZ) * 0.5;
+  const halfWidth = (bounds.maxX - bounds.minX) * 0.5;
+  return {
+    front: overrides.front ?? { position: [x, height * 0.45, bounds.maxZ + 18], target: [x, height * 0.42, z], ySemantics: 'site-ground-relative' },
+    'three-quarter': overrides['three-quarter'] ?? { position: [x + halfWidth + 14, height * 0.58, bounds.maxZ + 15], target: [x, height * 0.4, z], ySemantics: 'site-ground-relative' },
+    route: overrides.route ?? { position: [routePosition.x, height * 0.5, routePosition.z], target: [x, height * 0.38, z], ySemantics: 'site-ground-relative' },
+    low: overrides.low ?? { position: [x + halfWidth + 8, 2.2, bounds.maxZ + 12], target: [x, height * 0.52, z], ySemantics: 'site-ground-relative' },
+  };
+};
+
+const architectureProvenance = (
+  sourcedContext: string,
+  artisticInterpretation: string,
+): ArchitectureSite['provenance'] => ({
+  sourcedContext,
+  artisticInterpretation,
+  exactFacade: 'authored-inference',
+  replica: false,
+});
+
+const authoredArchitectureSites = [
+  {
+    id: 'villa-west-neoclassical', kind: 'ordinary', style: 'german-neoclassical', stories: 2,
+    siteBounds: { minX: -178, maxX: -160, minZ: -196, maxZ: -189 },
+    visibleBounds: { minX: -177.5, maxX: -160.5, minZ: -195.5, maxZ: -189.5 },
+    collisionBounds: { minX: -178, maxX: -160, minZ: -196, maxZ: -189 },
+    viewpointId: 'zijingguan-return', inspiration: null,
+    materials: ['muted-cream-stucco', 'red-brown-roof', 'restrained-stone-trim'],
+    motifs: [{ id: 'symmetric-stucco-massing', ownership: 'style-family', sourceBound: false }, { id: 'hipped-gabled-red-brown-roof', ownership: 'style-family', sourceBound: false }],
+    signage: 'small-gate-plaque',
+    provenance: architectureProvenance('Badaguan includes varied European-influenced garden-villa families.', 'Muted cream symmetry, roof form, trim, dimensions, and exact facade are authored for this compressed district.'),
+    cameraViews: cameraViews({ minX: -178, maxX: -160, minZ: -196, maxZ: -189 }, 9, { x: 0, z: -170 }, {
+      route: { position: [-155, 4.6, -181.2], target: [-169, 3.6, -192.5], ySemantics: 'site-ground-relative' },
+      low: { position: [-155, 3.6, -181.2], target: [-169, 3.6, -192.5], ySemantics: 'site-ground-relative' },
+    }),
+  },
+  {
+    id: 'villa-central-spanish', kind: 'ordinary', style: 'spanish', stories: 2,
+    siteBounds: { minX: 24, maxX: 44, minZ: -106, maxZ: -99 },
+    visibleBounds: { minX: 24.5, maxX: 43.5, minZ: -105.5, maxZ: -99.5 },
+    collisionBounds: { minX: 24, maxX: 44, minZ: -106, maxZ: -99 },
+    viewpointId: 'mixed-villa-intersection', inspiration: null,
+    materials: ['warm-stucco', 'low-red-tile-roof', 'dark-balcony-metal'],
+    motifs: [{ id: 'restrained-balcony-cue', ownership: 'style-family', sourceBound: false }],
+    signage: 'small-gate-plaque',
+    provenance: architectureProvenance('Spanish-influenced villas form one of the district’s broad architectural families.', 'The restrained balcony, dimensions, placement, and exact facade are authored rather than a replica.'),
+    cameraViews: cameraViews({ minX: 24, maxX: 44, minZ: -106, maxZ: -99 }, 9, { x: -24, z: -14 }, {
+      route: { position: [44, 4.8, -87.5], target: [34, 3.42, -102.5], ySemantics: 'site-ground-relative' },
+      low: { position: [49, 3.6, -91], target: [34, 4.68, -102.5], ySemantics: 'site-ground-relative' },
+    }),
+  },
+  {
+    id: 'villa-central-gothic', kind: 'ordinary', style: 'gothic-castle', stories: 3,
+    siteBounds: { minX: 60, maxX: 82, minZ: -106, maxZ: -99 },
+    visibleBounds: { minX: 60.5, maxX: 81.5, minZ: -105.5, maxZ: -99.5 },
+    collisionBounds: { minX: 60, maxX: 82, minZ: -106, maxZ: -99 },
+    viewpointId: 'mixed-villa-intersection', inspiration: null,
+    materials: ['gray-stone', 'charcoal-steep-roof', 'restrained-stone-trim'],
+    motifs: [{ id: 'asymmetric-steep-gable', ownership: 'style-family', sourceBound: false }, { id: 'compact-tower', ownership: 'style-family', sourceBound: false }],
+    signage: 'small-gate-plaque',
+    provenance: architectureProvenance('Gothic and castle-like villas contribute to Badaguan’s varied garden-villa context.', 'Asymmetry, steep gable, compact tower, dimensions, and exact facade are authored inference.'),
+    cameraViews: cameraViews({ minX: 60, maxX: 82, minZ: -106, maxZ: -99 }, 13, { x: -24, z: -14 }, {
+      route: { position: [85.5, 6.55, -91.8], target: [71, 5.2, -102.5], ySemantics: 'site-ground-relative' },
+      low: { position: [88, 4.2, -91], target: [71, 5.8, -102.5], ySemantics: 'site-ground-relative' },
+    }),
+  },
+  {
+    id: 'villa-east-neoclassical', kind: 'ordinary', style: 'german-neoclassical', stories: 3,
+    siteBounds: { minX: 146, maxX: 168, minZ: -196, maxZ: -189 },
+    visibleBounds: { minX: 146.5, maxX: 167.5, minZ: -195.5, maxZ: -189.5 },
+    collisionBounds: { minX: 146, maxX: 168, minZ: -196, maxZ: -189 },
+    viewpointId: 'ginkgo-maple-corridor', inspiration: null,
+    materials: ['muted-cream-stucco', 'red-brown-roof', 'restrained-stone-trim'],
+    motifs: [{ id: 'symmetric-stucco-massing', ownership: 'style-family', sourceBound: false }, { id: 'restrained-classical-trim', ownership: 'style-family', sourceBound: false }],
+    signage: 'small-gate-plaque',
+    provenance: architectureProvenance('German-influenced neoclassical villas are represented as a broad district family.', 'This taller variant, dimensions, and exact facade are authored inference.'),
+    cameraViews: cameraViews({ minX: 146, maxX: 168, minZ: -196, maxZ: -189 }, 13, { x: 24, z: -28 }, {
+      route: { position: [165, 6, -177.5], target: [157, 4.94, -192.5], ySemantics: 'site-ground-relative' },
+      low: { position: [171, 4.8, -181.2], target: [157, 5.2, -192.5], ySemantics: 'site-ground-relative' },
+    }),
+  },
+  {
+    id: 'princess-inspired-landmark', kind: 'landmark', style: 'princess-nordic', stories: 2,
+    siteBounds: { minX: 20, maxX: 42, minZ: -158, maxZ: -140 },
+    visibleBounds: { minX: 20.5, maxX: 41.5, minZ: -157.5, maxZ: -140.5 },
+    collisionBounds: { minX: 20, maxX: 42, minZ: -158, maxZ: -140 },
+    viewpointId: 'princess-inspired-anchor', inspiration: 'princess',
+    materials: ['pine-green-stucco', 'dark-nordic-roof', 'crafted-wood-window'],
+    motifs: [{ id: 'nordic-danish-pine-green', ownership: 'landmark-specific', sourceBound: true }, { id: 'crafted-wood-window-cue', ownership: 'landmark-specific', sourceBound: true }],
+    signage: 'none',
+    provenance: architectureProvenance('Princess Building is represented by Nordic/Danish-influenced form, a pine-green exterior, and crafted wood-window cues.', 'The simplified composition, dimensions, placement, and exact facade are authored and not a replica.'),
+    cameraViews: cameraViews({ minX: 20, maxX: 42, minZ: -158, maxZ: -140 }, 10, { x: 0, z: -125 }),
+  },
+  {
+    id: 'butterfly-inspired-landmark', kind: 'landmark', style: 'butterfly-mansard', stories: 3,
+    siteBounds: { minX: -48, maxX: -22, minZ: -202, maxZ: -182 },
+    visibleBounds: { minX: -47.5, maxX: -22.5, minZ: -201.5, maxZ: -182.5 },
+    collisionBounds: { minX: -48, maxX: -22, minZ: -202, maxZ: -182 },
+    viewpointId: 'butterfly-inspired-anchor', inspiration: 'butterfly',
+    materials: ['warm-brick', 'dark-timber', 'charcoal-mansard-roof'],
+    motifs: [{ id: 'mansard-roof', ownership: 'landmark-specific', sourceBound: true }, { id: 'brick-timber-expression', ownership: 'landmark-specific', sourceBound: true }],
+    signage: 'none',
+    provenance: architectureProvenance('Butterfly Building is represented by a Mansard roof and brick-timber character.', 'The composition, dimensions, placement, silhouette, and exact facade are authored and not a replica.'),
+    cameraViews: cameraViews({ minX: -48, maxX: -22, minZ: -202, maxZ: -182 }, 14, { x: 0, z: -170 }, {
+      front: { position: [-30, 9.8, -164], target: [-35, 5.88, -192], ySemantics: 'site-ground-relative' },
+    }),
+  },
+  {
+    id: 'huashi-inspired-landmark', kind: 'landmark', style: 'huashi-castle', stories: 3,
+    siteBounds: { minX: 22, maxX: 50, minZ: 20, maxZ: 31 },
+    visibleBounds: { minX: 22.5, maxX: 49.5, minZ: 20.5, maxZ: 30.5 },
+    collisionBounds: { minX: 22, maxX: 50, minZ: 20, maxZ: 31 },
+    viewpointId: 'shore-huashi-vista', inspiration: 'huashi',
+    materials: ['warm-gray-stone', 'charcoal-roof', 'restrained-castle-trim'],
+    motifs: [{ id: 'compact-sculptural-shore-massing', ownership: 'landmark-specific', sourceBound: true }, { id: 'compact-tower-cue', ownership: 'landmark-specific', sourceBound: false }],
+    signage: 'none',
+    provenance: architectureProvenance('Huashi Villa is represented by compact, sculptural, castle-like shore massing.', 'The compact tower cue, dimensions, placement, and exact facade are authored and not a replica.'),
+    cameraViews: cameraViews({ minX: 22, maxX: 50, minZ: 20, maxZ: 31 }, 14, { x: 0, z: 35 }),
+  },
+] as const satisfies readonly ArchitectureSite[];
+
 const authoredDistrict = {
   worldBounds: { minX: -210, maxX: 210, minZ: -300, maxZ: 60 },
   navigableBounds: { minX: -200, maxX: 200, minZ: -290, maxZ: 38 },
@@ -150,12 +281,13 @@ const authoredDistrict = {
     },
     collidable: false,
   },
-  collisionFootprints: [
-    { id: 'future-building-west', bounds: { minX: -183, maxX: -142, minZ: -195, maxZ: -190 }, purpose: 'future-building' },
-    { id: 'future-building-central-west', bounds: { minX: 24, maxX: 50, minZ: -105, maxZ: -100 }, purpose: 'future-building' },
-    { id: 'future-building-central-east', bounds: { minX: 60, maxX: 86, minZ: -105, maxZ: -100 }, purpose: 'future-building' },
-    { id: 'future-building-east', bounds: { minX: 141, maxX: 184, minZ: -195, maxZ: -190 }, purpose: 'future-building' },
-  ],
+  collisionFootprints: authoredArchitectureSites.map(({ id, collisionBounds }) => ({
+    id: `${id}-collision`,
+    subjectId: id,
+    bounds: collisionBounds,
+    purpose: 'architecture' as const,
+  })),
+  architectureSites: authoredArchitectureSites,
   spawn: { x: 0, z: 5 },
   reset: { x: 0, z: 5 },
   spawnYaw: -Math.PI / 8,
@@ -177,7 +309,7 @@ const authoredDistrict = {
     roadLayout: roadInference,
     publicGreen: inference('Authored public-green placement and paths; not geospatial.'),
     routeGeometry: inference('Authored route and landmark anchors; not a real-world walking itinerary.'),
-    buildingFootprints: inference('Simplified collision reservations for future buildings, without villa detail.'),
+    buildingFootprints: inference('Architecture sites, visible extents, and matching collision AABBs are authored for the compressed experience; not surveyed parcels or historic coordinates.'),
   },
 } as const satisfies DistrictData;
 
@@ -190,3 +322,4 @@ function deepFreeze<T>(value: T): T {
 export const DISTRICT_DATA: DistrictData = deepFreeze(authoredDistrict);
 export const ROAD_SPECS: readonly RoadSpec[] = DISTRICT_DATA.roads;
 export const ROUTE_ANCHORS: readonly RouteAnchor[] = DISTRICT_DATA.routeAnchors;
+export const ARCHITECTURE_SITES: readonly ArchitectureSite[] = DISTRICT_DATA.architectureSites;

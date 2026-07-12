@@ -210,6 +210,7 @@ button:disabled {
 
 .about summary {
   min-height: var(--control-min-size);
+  min-width: var(--control-min-size);
   padding: var(--space-2) var(--space-3);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-pill);
@@ -219,17 +220,26 @@ button:disabled {
   list-style-position: inside;
 }
 
-.about p {
+.about-panel {
   position: absolute;
+  top: calc(100% + var(--space-2));
   right: 0;
-  width: min(25rem, calc(100vw - var(--space-6)));
-  margin: var(--space-2) 0 0;
-  padding: var(--space-4);
+  width: min(
+    var(--content-wide),
+    calc(100vw - var(--edge-inline) - var(--edge-right))
+  );
+  max-height: calc(
+    100svh - var(--edge-top) - var(--edge-bottom) - var(--space-8)
+  );
+  padding: var(--space-5);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-panel);
   box-shadow: var(--shadow-panel);
-  font-size: var(--text-sm);
+  scrollbar-gutter: stable;
 }
 
 .experience {
@@ -435,6 +445,13 @@ button:disabled {
   background-color: var(--color-panel-soft);
 }
 
+.about[open] summary,
+.about[open] summary:hover {
+  color: var(--color-accent-ink);
+  border-color: var(--color-accent-strong);
+  background: var(--color-accent);
+}
+
 .action-button[data-variant="primary"]:not(:disabled):hover {
   color: var(--color-accent-ink);
   background: var(--color-accent-strong);
@@ -484,6 +501,26 @@ button:disabled {
   display: none;
 }
 
+.drawer-panel:not([hidden]):has(.drawer-scroll-region) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.drawer-scroll-region {
+  min-width: 0;
+  min-height: 0;
+  padding-top: var(--space-3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.drawer-panel:has(.drawer-scroll-region) > .drawer-heading {
+  flex: 0 0 auto;
+}
+
 .drawer-heading {
   display: flex;
   align-items: flex-start;
@@ -514,6 +551,47 @@ button:disabled {
 
 .drawer-panel p {
   margin: var(--space-3) 0 0;
+}
+
+.disclosure-intro {
+  margin: 0;
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+}
+
+.help-controls,
+.disclosure-section {
+  margin-top: var(--space-5);
+}
+
+.help-controls h3,
+.disclosure-section h2,
+.disclosure-section h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--color-accent);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  line-height: var(--line-heading);
+  text-transform: uppercase;
+}
+
+.disclosure-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.disclosure-list li {
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+}
+
+.disclosure-panel,
+.drawer-scroll-region {
+  overflow-wrap: anywhere;
 }
 
 .drawer-close {
@@ -689,12 +767,15 @@ html:has(.no-script) #app-status {
     max-width: 7rem;
   }
 
-  .about p {
+  .about-panel {
     position: fixed;
     top: calc(var(--edge-top) + var(--space-7));
-    right: var(--space-3);
-    left: var(--space-3);
+    right: var(--edge-right);
+    bottom: var(--edge-bottom);
+    left: var(--edge-inline);
     width: auto;
+    max-height: none;
+    padding: var(--space-4);
   }
 
   .experience {

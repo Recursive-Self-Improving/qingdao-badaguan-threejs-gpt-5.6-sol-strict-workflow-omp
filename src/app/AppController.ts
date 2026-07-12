@@ -221,7 +221,27 @@ export class AppController {
           const radius = typeof detail.radius === 'number' && Number.isFinite(detail.radius)
             ? detail.radius
             : undefined;
-          this.runtime?.probeWorldNavigation({ x: detail.x, z: detail.z }, radius);
+          const candidateFrom = detail.from;
+          const from = typeof candidateFrom === 'object'
+            && candidateFrom !== null
+            && typeof (candidateFrom as Record<string, unknown>).x === 'number'
+            && Number.isFinite((candidateFrom as Record<string, unknown>).x)
+            && typeof (candidateFrom as Record<string, unknown>).z === 'number'
+            && Number.isFinite((candidateFrom as Record<string, unknown>).z)
+            ? {
+                x: (candidateFrom as { readonly x: number }).x,
+                z: (candidateFrom as { readonly z: number }).z,
+              }
+            : undefined;
+          this.runtime?.probeWorldNavigation({ x: detail.x, z: detail.z }, radius, from);
+        }
+        return;
+      }
+      if (detail?.action === 'architecture/frame') {
+        const view = detail.view;
+        if (typeof detail.subjectId === 'string'
+          && (view === 'front' || view === 'three-quarter' || view === 'route' || view === 'low')) {
+          this.runtime?.frameArchitecture(detail.subjectId, view);
         }
         return;
       }

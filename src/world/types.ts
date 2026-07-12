@@ -92,7 +92,8 @@ export interface CoastSpec {
 export interface CollisionFootprint {
   readonly id: string;
   readonly bounds: Bounds2;
-  readonly purpose: 'future-building';
+  readonly purpose: 'architecture';
+  readonly subjectId: ArchitectureSubjectId;
 }
 
 export type StandardRouteAnchorKind = 'spawn' | 'road' | 'public-green' | 'uphill' | 'coast' | 'reset';
@@ -143,6 +144,96 @@ export interface SightlineSpec {
   readonly toward: Vec2;
 }
 
+export type ArchitectureSubjectId =
+  | 'villa-west-neoclassical'
+  | 'villa-central-spanish'
+  | 'villa-central-gothic'
+  | 'villa-east-neoclassical'
+  | 'princess-inspired-landmark'
+  | 'butterfly-inspired-landmark'
+  | 'huashi-inspired-landmark';
+
+export type ArchitectureStyle =
+  | 'german-neoclassical'
+  | 'spanish'
+  | 'gothic-castle'
+  | 'princess-nordic'
+  | 'butterfly-mansard'
+  | 'huashi-castle';
+
+export type ArchitectureKind = 'ordinary' | 'landmark';
+export type ArchitectureFrameView = 'front' | 'three-quarter' | 'route' | 'low';
+export type ArchitectureCameraView = {
+  readonly position: readonly [number, number, number];
+  readonly target: readonly [number, number, number];
+  readonly ySemantics: 'site-ground-relative';
+};
+
+export interface ArchitectureMotif {
+  readonly id: string;
+  readonly ownership: 'style-family' | 'landmark-specific';
+  readonly sourceBound: boolean;
+}
+
+export interface ArchitectureProvenance {
+  readonly sourcedContext: string;
+  readonly artisticInterpretation: string;
+  readonly exactFacade: 'authored-inference';
+  readonly replica: false;
+}
+
+export interface ArchitectureSite {
+  readonly id: ArchitectureSubjectId;
+  readonly kind: ArchitectureKind;
+  readonly style: ArchitectureStyle;
+  readonly stories: 2 | 3;
+  readonly siteBounds: Bounds2;
+  readonly visibleBounds: Bounds2;
+  readonly collisionBounds: Bounds2;
+  readonly viewpointId: string;
+  readonly inspiration: 'princess' | 'butterfly' | 'huashi' | null;
+  readonly materials: readonly string[];
+  readonly motifs: readonly ArchitectureMotif[];
+  readonly signage: 'none' | 'small-gate-plaque';
+  readonly provenance: ArchitectureProvenance;
+  readonly cameraViews: Readonly<Record<ArchitectureFrameView, ArchitectureCameraView>>;
+}
+
+export interface ArchitectureSubjectMetrics {
+  readonly subjectId: ArchitectureSubjectId;
+  readonly style: ArchitectureStyle;
+  readonly stories: 2 | 3;
+  readonly motifIds: readonly string[];
+  readonly siteBounds: Bounds2;
+  readonly visibleBounds: Bounds2;
+  readonly collisionBounds: Bounds2;
+  readonly componentCount: number;
+  readonly instanceCount: number;
+}
+
+export interface ArchitectureReuseMetrics {
+  readonly sharedGeometryCount: number;
+  readonly sharedMaterialCount: number;
+  readonly instanceBatchCount: number;
+  readonly instanceCount: number;
+  readonly estimatedInstancedDrawCalls: number;
+  readonly naiveRepeatedDrawCalls: number;
+}
+
+export interface ArchitectureBuildPart {
+  readonly root: Object3D;
+  readonly subjects: readonly ArchitectureSubjectMetrics[];
+  readonly cameraViews: Readonly<Partial<Record<ArchitectureSubjectId, Readonly<Record<ArchitectureFrameView, ArchitectureCameraView>>>>>;
+}
+
+export interface ArchitectureBuildResult {
+  readonly root: Object3D;
+  readonly subjects: readonly ArchitectureSubjectMetrics[];
+  readonly cameraViews: Readonly<Record<ArchitectureSubjectId, Readonly<Record<ArchitectureFrameView, ArchitectureCameraView>>>>;
+  readonly reuse: ArchitectureReuseMetrics;
+  readonly labelsVisible: false;
+}
+
 export interface DistrictProvenance {
   readonly coordinateSystem: string;
   readonly roadLayout: AuthoredInference;
@@ -159,6 +250,7 @@ export interface DistrictData {
   readonly publicGreen: PublicGreenSpec;
   readonly coast: CoastSpec;
   readonly collisionFootprints: readonly CollisionFootprint[];
+  readonly architectureSites: readonly ArchitectureSite[];
   readonly spawn: Vec2;
   readonly reset: Vec2;
   readonly routeAnchors: readonly RouteAnchor[];
@@ -209,6 +301,7 @@ export interface WorldBuildResult {
   readonly root: Object3D;
   readonly data: DistrictData;
   readonly debug: WorldDebugController;
+  readonly architecture: ArchitectureBuildResult;
   readonly navigation: {
     readonly resolve: NavigationResolver;
     readonly sampleGroundHeight: GroundHeightSampler;

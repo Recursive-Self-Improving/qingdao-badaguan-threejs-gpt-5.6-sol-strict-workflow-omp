@@ -253,19 +253,13 @@ describe('authored Badaguan district data', () => {
       expect(path.centerline.length).toBeGreaterThanOrEqual(2);
       expect(path.centerline.every((point) => contains(DISTRICT_DATA.publicGreen.bounds, point))).toBe(true);
     }
+    expect(DISTRICT_DATA.collisionFootprints).toHaveLength(DISTRICT_DATA.architectureSites.length);
     for (const footprint of DISTRICT_DATA.collisionFootprints) {
-      expect(footprint.purpose).toBe('future-building');
-      const containingParcel = DISTRICT_DATA.parcels.find((parcel) => {
-        const setbackInterior = {
-          minX: parcel.bounds.minX + parcel.setback,
-          maxX: parcel.bounds.maxX - parcel.setback,
-          minZ: parcel.bounds.minZ + parcel.setback,
-          maxZ: parcel.bounds.maxZ - parcel.setback,
-        };
-        return contains(setbackInterior, { x: footprint.bounds.minX, z: footprint.bounds.minZ })
-          && contains(setbackInterior, { x: footprint.bounds.maxX, z: footprint.bounds.maxZ });
-      });
-      expect(containingParcel, `${footprint.id} must occupy a parcel setback interior`).toBeDefined();
+      expect(footprint.purpose).toBe('architecture');
+      const site = DISTRICT_DATA.architectureSites.find(({ id }) => id === footprint.subjectId);
+      expect(site, `${footprint.id} must identify an architecture site`).toBeDefined();
+      expect(footprint.bounds).toEqual(site?.collisionBounds);
+
 
       for (const road of ROAD_SPECS) {
         const padding = corridorPadding(road);

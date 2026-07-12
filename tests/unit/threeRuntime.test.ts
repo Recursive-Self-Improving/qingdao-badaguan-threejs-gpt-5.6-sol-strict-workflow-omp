@@ -9,7 +9,7 @@ import {
 } from '../../src/render/ThreeRuntime';
 import type { DisposableResource } from '../../src/render/ResourceRegistry';
 import { DISTRICT_DATA } from '../../src/world/districtData';
-import type { RouteAnchor, WorldBuildResult } from '../../src/world/types';
+import type { ArchitectureBuildResult, RouteAnchor, WorldBuildResult } from '../../src/world/types';
 import { sampleGroundHeight } from '../../src/world/terrain/createTerrain';
 import { resolveNavigation } from '../../src/exploration/navigation';
 
@@ -20,6 +20,7 @@ interface RendererDouble {
   readonly setAnimationLoop: Mock<(callback: FrameRequestCallback | null) => void>;
   readonly render: Mock<(...args: unknown[]) => void>;
   readonly dispose: Mock<() => void>;
+  readonly info: { readonly render: { calls: number; triangles: number } };
 }
 
 interface ViewportDouble {
@@ -29,12 +30,17 @@ interface ViewportDouble {
 }
 
 function createRenderer(): RendererDouble {
+  const info = { render: { calls: 0, triangles: 0 } };
   return {
     outputColorSpace: null,
     toneMapping: null,
     toneMappingExposure: 0,
     setAnimationLoop: vi.fn(),
-    render: vi.fn(),
+    render: vi.fn(() => {
+      info.render.calls = 1;
+      info.render.triangles = 120;
+    }),
+    info,
     dispose: vi.fn(),
   };
 }
@@ -46,6 +52,34 @@ function createViewport(): ViewportDouble {
 function disposable(dispose: () => void = vi.fn()): DisposableResource {
   return { dispose };
 }
+function architectureBuild(): ArchitectureBuildResult {
+  const cameraViews = Object.fromEntries(DISTRICT_DATA.architectureSites.map((site) => [site.id, site.cameraViews])) as ArchitectureBuildResult['cameraViews'];
+  return Object.freeze({
+    root: new Group(),
+    subjects: Object.freeze(DISTRICT_DATA.architectureSites.map((site) => Object.freeze({
+      subjectId: site.id,
+      style: site.style,
+      stories: site.stories,
+      motifIds: Object.freeze(site.motifs.map((motif) => motif.id)),
+      siteBounds: site.siteBounds,
+      visibleBounds: site.visibleBounds,
+      collisionBounds: site.collisionBounds,
+      componentCount: 1,
+      instanceCount: 0,
+    }))),
+    cameraViews: Object.freeze(cameraViews),
+    reuse: Object.freeze({
+      sharedGeometryCount: 4,
+      sharedMaterialCount: 6,
+      instanceBatchCount: 3,
+      instanceCount: 24,
+      estimatedInstancedDrawCalls: 3,
+      naiveRepeatedDrawCalls: 24,
+    }),
+    labelsVisible: false,
+  });
+}
+
 function worldBuild(): WorldBuildResult {
   const root = new Group();
   let visible = false;
@@ -54,6 +88,7 @@ function worldBuild(): WorldBuildResult {
   return {
     root,
     data: DISTRICT_DATA,
+    architecture: architectureBuild(),
     debug: {
       root: new Group(),
       get visible() { return visible; },
@@ -305,6 +340,62 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(runtime.metrics.world.coast.screen.height).toBeGreaterThan(APP_CONFIG.camera.eyeHeight);
     expect(runtime.metrics.world.coast.screen.openings).toHaveLength(3);
 
+    expect(runtime.metrics.world.architecture).toMatchObject({
+      subjects: expect.arrayContaining([
+        expect.objectContaining({ subjectId: 'villa-west-neoclassical', style: 'german-neoclassical', stories: 2 }),
+        expect.objectContaining({ subjectId: 'princess-inspired-landmark', style: 'princess-nordic', stories: 2 }),
+      ]),
+      reuse: {
+        sharedGeometryCount: 4,
+        sharedMaterialCount: 6,
+        instanceBatchCount: 3,
+        instanceCount: 24,
+        estimatedInstancedDrawCalls: 3,
+        naiveRepeatedDrawCalls: 24,
+      },
+      labelsVisible: false,
+      renderInfo: { calls: 0, triangles: 0 },
+    });
+    const rendersBeforeInvalidFrame = renderer.render.mock.calls.length;
+    expect(runtime.frameArchitecture('not-a-subject', 'front')).toBeNull();
+    expect(renderer.render).toHaveBeenCalledTimes(rendersBeforeInvalidFrame);
+    const cameraBeforeInvalidView = runtime.camera.position.toArray();
+    const rendersBeforeInvalidView = renderer.render.mock.calls.length;
+    expect(runtime.frameArchitecture('villa-west-neoclassical', 'invalid' as never)).toBeNull();
+    expect(renderer.render).toHaveBeenCalledTimes(rendersBeforeInvalidView);
+    expect(runtime.camera.position.toArray()).toEqual(cameraBeforeInvalidView);
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
+    runtime.setWorldDebugVisible(true);
+    const architectureView = DISTRICT_DATA.architectureSites[0]?.cameraViews['three-quarter'];
+    expect(architectureView).toBeDefined();
+    const architectureFrame = runtime.frameArchitecture('villa-west-neoclassical', 'three-quarter');
+    expect(architectureFrame).toEqual({
+      subjectId: 'villa-west-neoclassical',
+      view: 'three-quarter',
+      rendererCalls: 1,
+      rendererTriangles: 120,
+    });
+    expect(runtime.metrics.world.debug.visible).toBe(false);
+    expect(runtime.metrics.world.architecture?.activeFrame).toEqual(architectureFrame);
+    expect(runtime.metrics.world.architecture?.renderInfo).toEqual({ calls: 1, triangles: 120 });
+    expect(architectureView?.ySemantics).toBe('site-ground-relative');
+    const viewGroundHeight = sampleGroundHeight(
+      architectureView?.target[0] ?? 0,
+      architectureView?.target[2] ?? 0,
+    );
+    expect(runtime.camera.position.toArray()).toEqual([
+      architectureView?.position[0],
+      viewGroundHeight + (architectureView?.position[1] ?? 0),
+      architectureView?.position[2],
+    ]);
+    runtime.setWorldDebugVisible(true);
+    expect(runtime.metrics.world.debug.visible).toBe(true);
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
+    expect(runtime.frameArchitecture('villa-west-neoclassical', 'front')).not.toBeNull();
+    expect(runtime.metrics.world.architecture?.activeFrame).not.toBeNull();
+    runtime.setWorldDebugVisible(false);
+    expect(runtime.metrics.world.debug.visible).toBe(false);
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
     runtime.setWorldDebugVisible(true);
     const publicGreenAnchor = DISTRICT_DATA.routeAnchors.find((candidate) => candidate.kind === 'public-green');
     expect(publicGreenAnchor).toBeDefined();
@@ -312,11 +403,13 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(anchor).toBe(publicGreenAnchor);
     expect(runtime.camera.position.x).toBe(anchor?.position.x);
     expect(runtime.camera.position.z).toBe(anchor?.position.z);
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
     expect(runtime.camera.position.y).toBeCloseTo(sampleGroundHeight(anchor?.position.x ?? 0, anchor?.position.z ?? 0) + APP_CONFIG.camera.eyeHeight);
     expect(runtime.camera.rotation.z).toBe(0);
 
+    const probeStart = { x: runtime.camera.position.x, z: runtime.camera.position.z };
     const probe = runtime.probeWorldNavigation({ x: 999, z: -999 });
-    expect(probe).toMatchObject({ clamped: true, requested: { x: 999, z: -999 } });
+    expect(probe).toMatchObject({ start: probeStart, clamped: true, requested: { x: 999, z: -999 } });
     expect(runtime.metrics.world.debug).toMatchObject({
       visible: true,
       currentAnchorId: publicGreenAnchor?.id,
@@ -325,7 +418,28 @@ describe('ThreeRuntime lifecycle safety', () => {
       lastProbe: probe,
     });
     expect(runtime.camera.position).toMatchObject({ x: probe?.position.x, z: probe?.position.z });
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
     expect(runtime.camera.position.y).toBeCloseTo((probe?.groundHeight ?? 0) + APP_CONFIG.camera.eyeHeight);
+
+    const clearStart = { x: DISTRICT_DATA.spawn.x, z: DISTRICT_DATA.spawn.z };
+    const clearProbe = runtime.probeWorldNavigation(clearStart, undefined, clearStart);
+    expect(clearProbe).toMatchObject({ start: clearStart, position: clearStart, collided: false, clamped: false });
+
+    const collisionBounds = DISTRICT_DATA.architectureSites[0]?.collisionBounds;
+    expect(collisionBounds).toBeDefined();
+    const collisionZ = ((collisionBounds?.minZ ?? 0) + (collisionBounds?.maxZ ?? 0)) / 2;
+    const collisionStart = { x: (collisionBounds?.minX ?? 0) - 1, z: collisionZ };
+    const collisionTarget = { x: (collisionBounds?.minX ?? 0) + 1, z: collisionZ };
+    const collisionProbe = runtime.probeWorldNavigation(collisionTarget, undefined, collisionStart);
+    expect(collisionProbe).toMatchObject({ start: collisionStart, collided: true });
+
+    const cameraBeforeInvalidFrom = { x: runtime.camera.position.x, z: runtime.camera.position.z };
+    const invalidFromProbe = runtime.probeWorldNavigation(
+      cameraBeforeInvalidFrom,
+      undefined,
+      { x: Number.NaN, z: 0 },
+    );
+    expect(invalidFromProbe?.start).toEqual(cameraBeforeInvalidFrom);
 
     const worldCenterX = (DISTRICT_DATA.worldBounds.minX + DISTRICT_DATA.worldBounds.maxX) / 2;
     const worldCenterZ = (DISTRICT_DATA.worldBounds.minZ + DISTRICT_DATA.worldBounds.maxZ) / 2;
@@ -367,6 +481,7 @@ describe('ThreeRuntime lifecycle safety', () => {
       activeView: null,
     });
     runtime.dispose();
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
     expect(runtime.worldBuildResult).toBeNull();
     expect(runtime.scene.children).toEqual([]);
     expect(runtime.metrics.world.roads.count).toBe(10);

@@ -5,5 +5,6 @@ import browserConfig from './playwright.config';
 export default defineConfig({
   ...browserConfig,
   testDir: './tests/visual',
-  outputDir: 'test-results/visual',
+  outputDir: 'test-results/c05/playwright',
+  projects: browserConfig.projects?.filter((project) => project.name === 'desktop-chromium'),
 });

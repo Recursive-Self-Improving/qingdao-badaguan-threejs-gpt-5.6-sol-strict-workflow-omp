@@ -22,13 +22,103 @@
           <p class="eyebrow">Qingdao · Shandong, China</p>
           <h1>Badaguan</h1>
         </div>
-        <details class="about">
-          <summary>About</summary>
-          <p>
-            This experience is an artistic, non-geospatial interpretation of Badaguan’s
-            tree-lined roads, garden villas, sloping terrain, and coastal atmosphere—not an
-            exact historical reconstruction.
-          </p>
+        <details class="about" data-testid="about-disclosure">
+          <summary
+            id="about-summary"
+            data-testid="about-toggle"
+            aria-controls="about-disclosure-panel"
+          >
+            About
+          </summary>
+          <div
+            id="about-disclosure-panel"
+            class="about-panel disclosure-panel"
+            data-testid="about-panel"
+            role="region"
+            aria-labelledby="about-summary"
+          >
+            <p class="disclosure-intro">
+              This disclosure separates source-backed context from artistic interpretation. Only
+              the broad cues listed as sourced context are treated as source-bounded; exact
+              composition choices are authored.
+            </p>
+            <section
+              class="disclosure-section"
+              data-testid="about-sourced-context"
+              aria-labelledby="about-sourced-context-title"
+            >
+              <h2 id="about-sourced-context-title">Sourced context</h2>
+              <ul class="disclosure-list">
+                <li>
+                  Badaguan is a coastal garden-villa district in Qingdao, associated with
+                  tree-lined, pass-named roads, varied low-rise architecture, sloping ground,
+                  and framed views toward the sea.
+                </li>
+                <li>
+                  Broad sourced architectural cues include German neoclassical, Gothic-castle,
+                  and Spanish villa families, plus a restrained palette of stone, brick/tile,
+                  stucco, timber, muted green, and red-brown roofs.
+                </li>
+                <li>
+                  The Princess Building’s source-bounded motif vocabulary includes Nordic/Danish,
+                  pine-green, and crafted wood-window cues.
+                </li>
+                <li>
+                  The Butterfly Building’s source-bounded motif vocabulary includes Mansard and
+                  brick-timber cues.
+                </li>
+                <li>
+                  The Huashi Building’s broad source cue is compact, sculptural, castle-like shore
+                  massing.
+                </li>
+              </ul>
+            </section>
+            <section
+              class="disclosure-section"
+              data-testid="about-artistic-interpretation"
+              aria-labelledby="about-artistic-interpretation-title"
+            >
+              <h2 id="about-artistic-interpretation-title">Artistic interpretation</h2>
+              <ul class="disclosure-list">
+                <li>
+                  Scale, geometry, road lengths, and walking distances are compressed or
+                  rearranged for a legible, navigable experience.
+                </li>
+                <li>
+                  Parcel placement and landmark adjacency are authored; on-screen proximity
+                  does not claim real-world adjacency or measured distance.
+                </li>
+                <li>
+                  Exact façades and procedural silhouettes—including the Princess-, Butterfly-,
+                  and Huashi-inspired compositions—are artistic inference, not measured replicas
+                  or exact reconstructions.
+                </li>
+                <li>
+                  Traditional planting cues are representative garden motifs, not a survey of
+                  the current planting or tree inventory.
+                </li>
+                <li>
+                  The Nordic/Danish, pine-green, and crafted wood-window source cues are confined
+                  to the Princess-inspired composition; its exact arrangement is authored.
+                </li>
+                <li>
+                  The Mansard and brick-timber source cues are confined to the Butterfly-inspired
+                  composition; its exact arrangement is authored.
+                </li>
+                <li>
+                  Wider reuse of either landmark-specific motif family would be artistic
+                  inference, not sourced fact.
+                </li>
+                <li>
+                  Any Huashi-inspired tower detail is authored rather than source-bound.
+                </li>
+                <li>
+                  The early-autumn morning light, haze, atmosphere, and weather are authored for
+                  this walk, not a report of current conditions.
+                </li>
+              </ul>
+            </section>
+          </div>
         </details>
       </header>
 

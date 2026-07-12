@@ -170,7 +170,7 @@ const COLORS = {
   worldBounds: 0xc27662,
   navigableBounds: 0x72a8b5,
   parcels: 0xd4a16b,
-  collisions: 0xd96f69,
+  architectureCollisions: 0xd96f69,
   publicGreen: 0x74b879,
   publicGreenMask: 0x315f3d,
   publicAccess01: 0xf4cf57,
@@ -196,7 +196,7 @@ interface DebugLineMaterials {
   readonly worldBounds: LineBasicMaterial;
   readonly navigableBounds: LineBasicMaterial;
   readonly parcels: LineBasicMaterial;
-  readonly collisions: LineBasicMaterial;
+  readonly architectureCollisions: LineBasicMaterial;
   readonly publicGreen: LineBasicMaterial;
   readonly publicAccess: Readonly<Record<PublicAccessTheme, LineBasicMaterial>>;
   readonly route: LineBasicMaterial;
@@ -683,7 +683,7 @@ function createDebugLineMaterials(resources: ResourceRegistry, group: string): D
     worldBounds: registerLineMaterial(resources, group, COLORS.worldBounds, 0.78),
     navigableBounds: registerLineMaterial(resources, group, COLORS.navigableBounds, 0.72),
     parcels: registerLineMaterial(resources, group, COLORS.parcels),
-    collisions: registerLineMaterial(resources, group, COLORS.collisions, 0.82),
+    architectureCollisions: registerLineMaterial(resources, group, COLORS.architectureCollisions, 0.82),
     publicGreen: registerLineMaterial(resources, group, COLORS.publicGreen),
     publicAccess: {
       access01: registerLineMaterial(resources, group, COLORS.publicAccess01),
@@ -1550,16 +1550,16 @@ export function createWorldDebug(
     materials.parcels,
   ));
 
-  const collisionPositions: number[] = [];
+  const architectureCollisionPositions: number[] = [];
   for (const footprint of DISTRICT_DATA.collisionFootprints) {
-    appendBounds(collisionPositions, footprint.bounds, DEBUG_SURFACE_OFFSET + 0.12);
+    appendBounds(architectureCollisionPositions, footprint.bounds, DEBUG_SURFACE_OFFSET + 0.12);
   }
   root.add(createLineObject(
     resources,
     group,
-    'debug:future-building-collisions',
-    collisionPositions,
-    materials.collisions,
+    'debug:architecture-collisions',
+    architectureCollisionPositions,
+    materials.architectureCollisions,
   ));
 
   const publicGreenBounds = DISTRICT_DATA.publicGreen.bounds;
@@ -2199,7 +2199,7 @@ export function createWorldDebug(
     ]),
     overview: createDebugViewLayer(root, 'debug:view-layer:overview', [
       'debug:parcels-and-setbacks',
-      'debug:future-building-collisions',
+      'debug:architecture-collisions',
       'debug:ordered-route',
       'debug:route-anchors',
       'debug:route-labels',

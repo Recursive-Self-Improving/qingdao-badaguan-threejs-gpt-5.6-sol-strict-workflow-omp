@@ -108,6 +108,26 @@ const HELP_ITEMS = [
   ['Fallback', 'If mouse lock is denied or fails, drag and keyboard or touch exploration remains available.'],
 ] as const;
 
+const SOURCED_CONTEXT_ITEMS = [
+  'Badaguan is a coastal garden-villa district in Qingdao, associated with tree-lined, pass-named roads, varied low-rise architecture, sloping ground, and framed views toward the sea.',
+  'Broad sourced architectural cues include German neoclassical, Gothic-castle, and Spanish villa families, plus a restrained palette of stone, brick/tile, stucco, timber, muted green, and red-brown roofs.',
+  'The Princess Building’s source-bounded motif vocabulary includes Nordic/Danish, pine-green, and crafted wood-window cues.',
+  'The Butterfly Building’s source-bounded motif vocabulary includes Mansard and brick-timber cues.',
+  'The Huashi Building’s broad source cue is compact, sculptural, castle-like shore massing.',
+] as const;
+
+const ARTISTIC_INTERPRETATION_ITEMS = [
+  'Scale, geometry, road lengths, and walking distances are compressed or rearranged for a legible, navigable experience.',
+  'Parcel placement and landmark adjacency are authored; on-screen proximity does not claim real-world adjacency or measured distance.',
+  'Exact façades and procedural silhouettes—including the Princess-, Butterfly-, and Huashi-inspired compositions—are artistic inference, not measured replicas or exact reconstructions.',
+  'Traditional planting cues are representative garden motifs, not a survey of the current planting or tree inventory.',
+  'The Nordic/Danish, pine-green, and crafted wood-window source cues are confined to the Princess-inspired composition; its exact arrangement is authored.',
+  'The Mansard and brick-timber source cues are confined to the Butterfly-inspired composition; its exact arrangement is authored.',
+  'Wider reuse of either landmark-specific motif family would be artistic inference, not sourced fact.',
+  'Any Huashi-inspired tower detail is authored rather than source-bound.',
+  'The early-autumn morning light, haze, atmosphere, and weather are authored for this walk, not a report of current conditions.',
+] as const;
+
 class AppUIElementError extends Error {
   constructor(selector: string) {
     super(`Required application UI element is missing or invalid: ${selector}`);
@@ -562,16 +582,50 @@ function createDrawerHeader(
   return header;
 }
 
+function createDisclosureSection(
+  documentRoot: Document,
+  headingId: string,
+  title: string,
+  items: readonly string[],
+  testId: string,
+): HTMLElement {
+  const section = documentRoot.createElement('section');
+  const heading = documentRoot.createElement('h3');
+  const list = documentRoot.createElement('ul');
+
+  section.className = 'disclosure-section';
+  section.dataset.testid = testId;
+  section.setAttribute('aria-labelledby', headingId);
+  heading.id = headingId;
+  heading.textContent = title;
+  list.className = 'disclosure-list';
+
+  for (const text of items) {
+    const item = documentRoot.createElement('li');
+    item.textContent = text;
+    list.append(item);
+  }
+
+  section.append(heading, list);
+  return section;
+}
+
 function createHelpPanel(documentRoot: Document): DocumentFragment {
   const fragment = documentRoot.createDocumentFragment();
+  const content = documentRoot.createElement('div');
   const intro = documentRoot.createElement('p');
+  const controlsSection = documentRoot.createElement('section');
   const controlsHeading = documentRoot.createElement('h3');
   const controls = documentRoot.createElement('ul');
-  const interpretationHeading = documentRoot.createElement('h3');
-  const interpretation = documentRoot.createElement('p');
 
+  content.className = 'drawer-scroll-region';
+  content.dataset.testid = 'help-disclosure';
+  intro.className = 'disclosure-intro';
   intro.textContent =
-    'Badaguan is a leafy coastal villa district in Qingdao. This experience offers an interpretive walk through garden roads, sloping ground, and glimpses toward the sea.';
+    'Use the controls below to explore. This disclosure separates source-backed context from artistic interpretation. Only the broad cues listed as sourced context are treated as source-bounded; exact composition choices are authored.';
+  controlsSection.className = 'help-controls';
+  controlsSection.setAttribute('aria-labelledby', 'app-help-controls-title');
+  controlsHeading.id = 'app-help-controls-title';
   controlsHeading.textContent = 'Controls';
   controls.className = 'help-list';
 
@@ -585,16 +639,28 @@ function createHelpPanel(documentRoot: Document): DocumentFragment {
     controls.append(item);
   }
 
-  interpretationHeading.textContent = 'About this interpretation';
-  interpretation.textContent =
-    'The layout is artistic and non-geospatial. It draws on Badaguan’s documented garden setting, varied low-rise villas, tree-lined roads, slope, and coastal atmosphere rather than claiming an exact reconstruction.';
+  controlsSection.append(controlsHeading, controls);
+  content.append(
+    intro,
+    controlsSection,
+    createDisclosureSection(
+      documentRoot,
+      'app-help-sourced-context-title',
+      'Sourced context',
+      SOURCED_CONTEXT_ITEMS,
+      'help-sourced-context',
+    ),
+    createDisclosureSection(
+      documentRoot,
+      'app-help-artistic-interpretation-title',
+      'Artistic interpretation',
+      ARTISTIC_INTERPRETATION_ITEMS,
+      'help-artistic-interpretation',
+    ),
+  );
   fragment.append(
     createDrawerHeader(documentRoot, 'app-help-title', 'Help', 'close-help-button'),
-    intro,
-    controlsHeading,
-    controls,
-    interpretationHeading,
-    interpretation,
+    content,
   );
   return fragment;
 }
@@ -801,9 +867,15 @@ export class AppUI {
       this.elements.overlay.removeAttribute('aria-busy');
     }
     this.elements.canvas.removeAttribute('tabindex');
-    this.elements.status.setAttribute('role', 'status');
-    this.elements.status.setAttribute('aria-live', 'polite');
-    this.elements.status.setAttribute('aria-atomic', 'true');
+    if (this.elements.status.getAttribute('role') !== 'status') {
+      this.elements.status.setAttribute('role', 'status');
+    }
+    if (this.elements.status.getAttribute('aria-live') !== 'polite') {
+      this.elements.status.setAttribute('aria-live', 'polite');
+    }
+    if (this.elements.status.getAttribute('aria-atomic') !== 'true') {
+      this.elements.status.setAttribute('aria-atomic', 'true');
+    }
     this.elements.controls.removeAttribute('aria-live');
     this.elements.controls.removeAttribute('aria-busy');
     this.elements.help.removeAttribute('aria-live');
@@ -893,7 +965,9 @@ export class AppUI {
   }
 
   private renderStatus(status: string, key: string): void {
-    this.elements.status.hidden = false;
+    if (this.elements.status.hidden) {
+      this.elements.status.hidden = false;
+    }
     if (this.lastAnnouncementKey === key) {
       return;
     }
