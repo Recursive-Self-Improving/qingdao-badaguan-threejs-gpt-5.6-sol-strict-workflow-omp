@@ -10,7 +10,7 @@ export const APP_COPY = {
   degraded:
     'The Badaguan experience is running in a reduced mode. Retry to check capabilities again.',
   contextLost:
-    'The graphics context was lost. Retry to check capabilities and restart the experience.',
+    'The graphics context was lost. A restart is required before the interactive walk can continue. Retry to check capabilities and restart the experience.',
   unsupported:
     'This browser cannot run the Badaguan 3D experience. You can retry after changing browser or device settings.',
   fatal: 'The Badaguan experience could not continue. Retry to start again.',

@@ -606,6 +606,7 @@ button:disabled {
   margin: 0;
 }
 
+html:has(.no-script) .interface-layer,
 html:has(.no-script) #app-status {
   display: none;
 }

@@ -57,15 +57,12 @@ export class AppController {
       return;
     }
 
-    const control =
-      this.state.kind === 'exploring'
-        ? this.state.control
-        : this.state.kind === 'degraded' && this.state.underlying?.kind === 'exploring'
-          ? this.state.underlying.control
-          : null;
-    if (control !== null) {
+    const isExploring =
+      this.state.kind === 'exploring' ||
+      (this.state.kind === 'degraded' && this.state.underlying?.kind === 'exploring');
+    if (isExploring) {
       event.preventDefault();
-      this.dispatch(control === 'locked' ? { type: 'POINTER_UNLOCKED' } : { type: 'PAUSE' });
+      this.dispatch({ type: 'PAUSE' });
     }
   };
 

@@ -36,7 +36,6 @@
         id="experience"
         class="experience"
         aria-labelledby="experience-title"
-        aria-busy="true"
       >
         <canvas
           id="app-canvas"
@@ -54,15 +53,16 @@
             class="experience-panel"
             aria-labelledby="experience-title"
             data-testid="state-panel"
+            hidden
           >
             <p id="app-kicker" class="eyebrow">An early-autumn coastal walk</p>
-            <h2 id="experience-title">Preparing your Badaguan walk</h2>
+            <h2 id="experience-title">Badaguan interactive landscape</h2>
             <p id="canvas-description" class="lede">
               Wander an interpretive landscape inspired by Badaguan’s tree-lined streets,
               detached garden villas, gentle southern slope, and maritime morning haze.
             </p>
             <p id="app-detail" class="state-detail">
-              Checking this browser before the interactive landscape begins.
+              JavaScript starts the interactive landscape when browser graphics support is available.
             </p>
             <div id="app-actions" class="primary-actions" aria-label="Experience actions"></div>
             <p id="app-notice" class="state-notice" hidden></p>
@@ -93,9 +93,7 @@
           ></nav>
         </div>
 
-        <p id="app-status" class="status" role="status" aria-live="polite" aria-atomic="true">
-          Loading Badaguan…
-        </p>
+        <p id="app-status" class="status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
       </main>
 
       <footer class="site-footer">

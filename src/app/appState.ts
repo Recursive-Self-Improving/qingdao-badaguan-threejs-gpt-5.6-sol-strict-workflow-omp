@@ -41,6 +41,8 @@ export type AppEvent =
   | { readonly type: 'CAPABILITY_SUPPORTED' }
   | { readonly type: 'CAPABILITY_UNSUPPORTED'; readonly reason: string }
   | { readonly type: 'START_EXPLORING' }
+  // Runtime pointer-lock events come from the authoritative browser bridge (DEV scenarios may inject them).
+  // Escape dispatches PAUSE; a later POINTER_UNLOCKED may only downgrade paused resume control.
   | { readonly type: 'POINTER_LOCK_CONFIRMED' }
   | { readonly type: 'POINTER_LOCK_DENIED' }
   | { readonly type: 'POINTER_LOCK_ERROR' }

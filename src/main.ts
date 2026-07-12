@@ -5,9 +5,23 @@ function readDevelopmentConfig(location: Location): AppControllerConfig {
     return {};
   }
 
-  return new URLSearchParams(location.search).get('capability') === 'supported'
-    ? { capabilityOptions: { result: true } }
-    : {};
+  const capability = new URLSearchParams(location.search).get('capability');
+  if (capability === 'supported') {
+    return { capabilityOptions: { result: true } };
+  }
+  if (capability === 'unsupported-then-supported') {
+    let supported = false;
+    return {
+      capabilityOptions: {
+        probe: () => {
+          const result = supported;
+          supported = true;
+          return result;
+        },
+      },
+    };
+  }
+  return {};
 }
 
 const controller = new AppController(window.location, readDevelopmentConfig(window.location));

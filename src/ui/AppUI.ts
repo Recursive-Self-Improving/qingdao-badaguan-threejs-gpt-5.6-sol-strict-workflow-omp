@@ -76,6 +76,8 @@ interface ActionSpec {
   readonly label: string;
   readonly variant: ButtonVariant;
   readonly testId: string;
+  readonly ariaControls?: string;
+  readonly ariaExpanded?: boolean;
 }
 
 interface ViewProjection {
@@ -375,11 +377,12 @@ function viewForState(state: AppState, invariant: AppStateInvariant): ViewProjec
       return degradedView(state, invariant);
     case 'context-lost':
       return {
-        kicker: 'Graphics recovery',
-        title: 'Restoring the landscape',
+        kicker: 'Graphics context lost',
+        title: 'Restart required',
         detail: invariant.visibleOutput,
         status: invariant.visibleOutput,
-        notice: 'Movement and rendering are paused. Retry restarts capability evaluation and rebuilds the experience.',
+        notice:
+          'Movement and rendering have stopped. Retry starts a fresh capability check and rebuilds the experience.',
         guide: NO_GUIDE,
         showDescription: true,
         compact: false,
@@ -445,19 +448,68 @@ function actionSpecs(state: AppState, invariant: AppStateInvariant): readonly Ac
 }
 
 
-function createButton(
-  documentRoot: Document,
-  spec: ActionSpec,
-  className: string,
-): HTMLButtonElement {
-  const button = documentRoot.createElement('button');
+function updateButton(button: HTMLButtonElement, spec: ActionSpec, className: string): void {
   button.type = 'button';
   button.className = className;
   button.dataset.uiAction = spec.command;
   button.dataset.variant = spec.variant;
   button.dataset.testid = spec.testId;
   button.textContent = spec.label;
+
+  if (spec.ariaControls === undefined) {
+    button.removeAttribute('aria-controls');
+  } else {
+    button.setAttribute('aria-controls', spec.ariaControls);
+  }
+
+  if (spec.ariaExpanded === undefined) {
+    button.removeAttribute('aria-expanded');
+  } else {
+    button.setAttribute('aria-expanded', String(spec.ariaExpanded));
+  }
+}
+
+function createButton(
+  documentRoot: Document,
+  spec: ActionSpec,
+  className: string,
+): HTMLButtonElement {
+  const button = documentRoot.createElement('button');
+  updateButton(button, spec, className);
   return button;
+}
+
+function reconcileButtons(
+  documentRoot: Document,
+  container: HTMLElement,
+  specs: readonly ActionSpec[],
+  className: string,
+): void {
+  const reusable = new Map<string, HTMLButtonElement>();
+  for (const child of Array.from(container.children)) {
+    if (child instanceof HTMLButtonElement && child.dataset.testid !== undefined) {
+      reusable.set(child.dataset.testid, child);
+    }
+  }
+
+  const buttons: HTMLButtonElement[] = [];
+  for (const spec of specs) {
+    const button = reusable.get(spec.testId) ?? createButton(documentRoot, spec, className);
+    reusable.delete(spec.testId);
+    updateButton(button, spec, className);
+    buttons.push(button);
+  }
+
+  for (const [index, button] of buttons.entries()) {
+    const current = container.children.item(index);
+    if (current !== button) {
+      container.insertBefore(button, current);
+    }
+  }
+
+  while (container.children.length > buttons.length) {
+    container.lastElementChild?.remove();
+  }
 }
 
 function appendControlGuide(
@@ -655,6 +707,7 @@ export class AppUI {
     const stateAnnouncementKey = announcementKey(state);
     const previousPanel = this.currentPanel;
     const previouslyReady = this.canFocusStart;
+    const focusedCommand = this.focusedActionOrUtilityCommand();
 
     this.currentPanel = invariant.panel;
     this.canFocusStart = invariant.canStart;
@@ -665,8 +718,9 @@ export class AppUI {
     this.renderActions(actionSpecs(state, invariant));
     this.renderUtilityControls(state, invariant.panel);
     this.renderPanels(invariant.panel, previousPanel);
+    this.renderDrawerIsolation(invariant.panel);
     this.renderStatus(view.status, stateAnnouncementKey);
-    this.applyFocus(previousPanel, previouslyReady);
+    this.applyFocus(previousPanel, previouslyReady, focusedCommand);
   }
 
   focusStart(): boolean {
@@ -702,6 +756,13 @@ export class AppUI {
       return;
     }
 
+    if (
+      this.currentPanel !== 'none' &&
+      (this.elements.overlay.contains(button) || this.elements.controls.contains(button))
+    ) {
+      return;
+    }
+
     const command = button.dataset.uiAction;
     if (command === 'open-help' || command === 'open-settings') {
       this.returnFocusCommand = command;
@@ -732,8 +793,13 @@ export class AppUI {
       this.elements.root.dataset.controlMode = invariant.control;
     }
 
-    const busy = state.kind === 'boot' || state.kind === 'loading' || state.kind === 'context-lost';
-    this.elements.experience.setAttribute('aria-busy', String(busy));
+    const busy = state.kind === 'boot' || state.kind === 'loading';
+    this.elements.experience.removeAttribute('aria-busy');
+    if (busy) {
+      this.elements.overlay.setAttribute('aria-busy', 'true');
+    } else {
+      this.elements.overlay.removeAttribute('aria-busy');
+    }
     this.elements.canvas.removeAttribute('tabindex');
     this.elements.status.setAttribute('role', 'status');
     this.elements.status.setAttribute('aria-live', 'polite');
@@ -745,6 +811,7 @@ export class AppUI {
   }
 
   private renderView(view: ViewProjection): void {
+    this.elements.overlay.hidden = false;
     this.elements.overlay.dataset.compact = String(view.compact);
     this.elements.overlay.dataset.tone = view.tone;
     this.elements.kicker.textContent = view.kicker;
@@ -757,15 +824,11 @@ export class AppUI {
   }
 
   private renderActions(specs: readonly ActionSpec[]): void {
-    const fragment = this.documentRoot.createDocumentFragment();
-    for (const spec of specs) {
-      fragment.append(createButton(this.documentRoot, spec, 'action-button'));
-    }
-    this.elements.actions.replaceChildren(fragment);
+    reconcileButtons(this.documentRoot, this.elements.actions, specs, 'action-button');
   }
 
   private renderUtilityControls(state: AppState, panel: AppPanel): void {
-    const fragment = this.documentRoot.createDocumentFragment();
+    const specs: ActionSpec[] = [];
     const helpAvailable = state.kind !== 'boot' && state.kind !== 'loading';
     const settingsAvailable =
       state.kind === 'onboarding' ||
@@ -775,40 +838,30 @@ export class AppUI {
 
     if (helpAvailable) {
       const active = panel === 'help';
-      const help = createButton(
-        this.documentRoot,
-        {
-          command: active ? 'close-panel' : 'open-help',
-          label: 'Help',
-          variant: 'secondary',
-          testId: 'help-button',
-        },
-        'utility-button',
-      );
-      help.setAttribute('aria-controls', 'app-help');
-      help.setAttribute('aria-expanded', String(active));
-      fragment.append(help);
+      specs.push({
+        command: active ? 'close-panel' : 'open-help',
+        label: 'Help',
+        variant: 'secondary',
+        testId: 'help-button',
+        ariaControls: 'app-help',
+        ariaExpanded: active,
+      });
     }
 
     if (settingsAvailable) {
       const active = panel === 'settings';
-      const settings = createButton(
-        this.documentRoot,
-        {
-          command: active ? 'close-panel' : 'open-settings',
-          label: 'Settings',
-          variant: 'secondary',
-          testId: 'settings-button',
-        },
-        'utility-button',
-      );
-      settings.setAttribute('aria-controls', 'app-settings');
-      settings.setAttribute('aria-expanded', String(active));
-      fragment.append(settings);
+      specs.push({
+        command: active ? 'close-panel' : 'open-settings',
+        label: 'Settings',
+        variant: 'secondary',
+        testId: 'settings-button',
+        ariaControls: 'app-settings',
+        ariaExpanded: active,
+      });
     }
 
     this.elements.controls.hidden = !helpAvailable && !settingsAvailable;
-    this.elements.controls.replaceChildren(fragment);
+    reconcileButtons(this.documentRoot, this.elements.controls, specs, 'utility-button');
   }
 
   private renderPanels(panel: AppPanel, previousPanel: AppPanel): void {
@@ -833,6 +886,12 @@ export class AppUI {
     }
   }
 
+  private renderDrawerIsolation(panel: AppPanel): void {
+    const covered = panel !== 'none';
+    this.elements.overlay.inert = covered;
+    this.elements.controls.inert = covered;
+  }
+
   private renderStatus(status: string, key: string): void {
     this.elements.status.hidden = false;
     if (this.lastAnnouncementKey === key) {
@@ -843,7 +902,11 @@ export class AppUI {
     this.lastAnnouncementKey = key;
   }
 
-  private applyFocus(previousPanel: AppPanel, previouslyReady: boolean): void {
+  private applyFocus(
+    previousPanel: AppPanel,
+    previouslyReady: boolean,
+    focusedCommand: UICommand | null,
+  ): void {
     if (this.currentPanel !== previousPanel) {
       if (this.currentPanel !== 'none') {
         this.focusPanelHeading(this.currentPanel);
@@ -859,9 +922,30 @@ export class AppUI {
       }
     }
 
+    if (
+      this.currentPanel === 'none' &&
+      focusedCommand !== null &&
+      this.focusCommand(focusedCommand)
+    ) {
+      return;
+    }
+
     if (!previouslyReady && this.canFocusStart && this.currentPanel === 'none') {
       this.focusStart();
     }
+  }
+
+  private focusedActionOrUtilityCommand(): UICommand | null {
+    const active = this.documentRoot.activeElement;
+    if (
+      !(active instanceof HTMLButtonElement) ||
+      (!this.elements.actions.contains(active) && !this.elements.controls.contains(active)) ||
+      !isUICommand(active.dataset.uiAction)
+    ) {
+      return null;
+    }
+
+    return active.dataset.uiAction;
   }
 
   private focusPanelHeading(panel: Exclude<AppPanel, 'none'>): void {
@@ -872,15 +956,22 @@ export class AppUI {
   }
 
   private focusCommand(command: UICommand): boolean {
-    const button = this.elements.interfaceLayer.querySelector<HTMLButtonElement>(
+    const buttons = this.elements.interfaceLayer.querySelectorAll<HTMLButtonElement>(
       `button[data-ui-action="${command}"]`,
     );
-    if (button === null || button.hidden || button.disabled) {
-      return false;
+
+    for (const button of buttons) {
+      if (button.disabled || button.closest('[hidden], [inert]') !== null) {
+        continue;
+      }
+
+      button.focus({ preventScroll: true });
+      if (this.documentRoot.activeElement === button) {
+        return true;
+      }
     }
 
-    button.focus();
-    return this.documentRoot.activeElement === button;
+    return false;
   }
 }
 

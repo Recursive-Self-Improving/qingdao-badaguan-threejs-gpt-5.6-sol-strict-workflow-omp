@@ -5,6 +5,7 @@ import {
   getAppStateInvariant,
   reduceAppState,
   type AppEvent,
+  type AppOperationalProjection,
   type AppState,
 } from '../../src/app/appState';
 import { APP_CONFIG, APP_COPY } from '../../src/app/config';
@@ -46,12 +47,79 @@ const ALL_EVENTS: readonly AppEvent[] = [
   { type: 'CLOSE_PANEL' },
 ];
 
+function expectedNextState(state: AppState, event: AppEvent): AppState | null {
+  if (event.type === 'OPEN_PANEL') {
+    if (state.kind === 'boot' || state.kind === 'loading') return null;
+    if (state.kind === 'exploring') return { kind: 'paused', resumeControl: state.control, panel: event.panel };
+    if (state.kind === 'degraded' && state.underlying?.kind === 'exploring') {
+      return { ...state, panel: event.panel, underlying: { kind: 'paused', resumeControl: state.underlying.control } };
+    }
+    return { ...state, panel: event.panel };
+  }
+  if (event.type === 'CLOSE_PANEL') return state.panel === undefined || state.panel === 'none' ? null : { ...state, panel: 'none' };
+  if (event.type === 'FATAL') return state.kind === 'fatal' ? null : { kind: 'fatal', reason: event.reason };
+  if (event.type === 'CONTEXT_LOST') return ['loading', 'onboarding', 'exploring', 'paused', 'degraded'].includes(state.kind) ? { kind: 'context-lost' } : null;
+  if (event.type === 'DEGRADED') {
+    if (!['loading', 'onboarding', 'exploring', 'paused'].includes(state.kind)) return null;
+    return { kind: 'degraded', reason: event.reason, underlying: state.kind === 'onboarding' || state.kind === 'exploring' || state.kind === 'paused' ? state : null };
+  }
+  switch (state.kind) {
+    case 'boot': return event.type === 'BOOT' ? { kind: 'loading' } : null;
+    case 'loading':
+      if (event.type === 'CAPABILITY_SUPPORTED') return { kind: 'onboarding' };
+      return event.type === 'CAPABILITY_UNSUPPORTED' ? { kind: 'unsupported', reason: event.reason } : null;
+    case 'onboarding': return event.type === 'START_EXPLORING' ? { kind: 'exploring', control: 'drag', fallbackReason: 'initial' } : null;
+    case 'exploring': {
+      if (event.type === 'POINTER_LOCK_CONFIRMED') return state.control === 'locked' ? null : { kind: 'exploring', control: 'locked' };
+      const fallbackReason = event.type === 'POINTER_LOCK_DENIED' ? 'denied' : event.type === 'POINTER_LOCK_ERROR' ? 'error' : event.type === 'POINTER_UNLOCKED' ? 'unlocked' : null;
+      if (fallbackReason !== null) return state.control === 'drag' && state.fallbackReason === fallbackReason ? null : { kind: 'exploring', control: 'drag', fallbackReason };
+      return event.type === 'PAUSE' ? { kind: 'paused', resumeControl: state.control } : null;
+    }
+    case 'paused':
+      if (event.type === 'RESUME') return { kind: 'exploring', control: state.resumeControl };
+      if (event.type === 'POINTER_UNLOCKED' || event.type === 'POINTER_LOCK_DENIED' || event.type === 'POINTER_LOCK_ERROR') return state.resumeControl === 'drag' ? null : { kind: 'paused', resumeControl: 'drag' };
+      return null;
+    case 'degraded': {
+      if (event.type === 'RETRY') return { kind: 'loading' };
+      if (state.underlying?.kind === 'onboarding' && event.type === 'START_EXPLORING') return { ...state, underlying: { kind: 'exploring', control: 'drag', fallbackReason: 'initial' } };
+      if (state.underlying?.kind === 'exploring' || state.underlying?.kind === 'paused') {
+        const projected = expectedNextState(state.underlying, event);
+        return projected === null
+          ? null
+          : { ...state, underlying: projected as AppOperationalProjection };
+      }
+      return null;
+    }
+    case 'context-lost': return event.type === 'RETRY' || event.type === 'CONTEXT_RESTORED' ? { kind: 'loading' } : null;
+    case 'unsupported':
+    case 'fatal': return event.type === 'RETRY' ? { kind: 'loading' } : null;
+  }
+}
+
+const TRANSITION_STATES: readonly AppState[] = [
+  ...ALL_STATES,
+  { kind: 'exploring', control: 'drag', fallbackReason: 'denied' },
+  { kind: 'paused', resumeControl: 'drag', panel: 'help' },
+  { kind: 'degraded', reason: 'Reduced detail.', underlying: { kind: 'onboarding' } },
+  { kind: 'degraded', reason: 'Reduced detail.', underlying: { kind: 'exploring', control: 'locked' } },
+  { kind: 'degraded', reason: 'Reduced detail.', underlying: { kind: 'exploring', control: 'drag', fallbackReason: 'error' } },
+  { kind: 'degraded', reason: 'Reduced detail.', underlying: { kind: 'paused', resumeControl: 'locked' }, panel: 'settings' },
+];
+
 describe('app state contract', () => {
-  it('provides nonblank visible output for every state and safely reduces every event', () => {
-    for (const state of ALL_STATES) {
+  it('matches the explicit legal and illegal transition table for every event kind', () => {
+    for (const state of TRANSITION_STATES) {
       expect(getAppStateInvariant(state).visibleOutput.trim()).not.toBe('');
       for (const event of ALL_EVENTS) {
-        expect(reduceAppState(state, event).invariant.visibleOutput.trim()).not.toBe('');
+        const expected = expectedNextState(state, event);
+        const actual = reduceAppState(state, event);
+        const accepted = expected !== null;
+
+        expect(actual.accepted, `${state.kind} + ${event.type}: accepted`).toBe(accepted);
+        expect(actual.transitioned, `${state.kind} + ${event.type}: transitioned`).toBe(accepted);
+        expect(actual.state, `${state.kind} + ${event.type}: exact state`).toEqual(expected ?? state);
+        if (!accepted) expect(actual.state, `${state.kind} + ${event.type}: identity`).toBe(state);
+        expect(actual.invariant).toEqual(getAppStateInvariant(expected ?? state));
       }
     }
   });
