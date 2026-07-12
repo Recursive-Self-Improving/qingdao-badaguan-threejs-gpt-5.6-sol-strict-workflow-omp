@@ -10,10 +10,12 @@ import {
   Mesh,
   MeshBasicMaterial,
   RingGeometry,
+  PerspectiveCamera,
   Sprite,
   SpriteMaterial,
   SRGBColorSpace,
   type Object3D,
+  Vector3,
 } from 'three';
 
 import { APP_CONFIG } from '../../app/config';
@@ -36,18 +38,21 @@ const ROUTE_LINE_OFFSET = 0.55;
 const SIGHTLINE_OFFSET = 0.8;
 const LABEL_CANVAS_WIDTH = 768;
 const LABEL_CANVAS_HEIGHT = 144;
+const EVIDENCE_CAPTURE_WIDTH_PX = 1246;
 const EVIDENCE_CAPTURE_HEIGHT_PX = 552;
 const LABEL_SCREEN_SCALE_PER_PIXEL = (
   2 * Math.tan((APP_CONFIG.camera.fov * Math.PI) / 360)
 ) / EVIDENCE_CAPTURE_HEIGHT_PX;
+const STATIC_LABEL_COLLISION_GAP_PX = 6;
 const ROAD_LABEL_TARGET_WIDTH_PX = 184;
 const ROAD_LABEL_TARGET_HEIGHT_PX = 34;
 const ROAD_LABEL_SCREEN_WIDTH = ROAD_LABEL_TARGET_WIDTH_PX * LABEL_SCREEN_SCALE_PER_PIXEL;
 const ROAD_LABEL_SCREEN_HEIGHT = ROAD_LABEL_TARGET_HEIGHT_PX * LABEL_SCREEN_SCALE_PER_PIXEL;
 const ROAD_LABEL_ALTITUDE = 10.5;
 const ROAD_LABEL_COLUMN_X = 350;
-const ROAD_LABEL_OUTER_NORTH_OFFSET = -2;
-const ROAD_LABEL_CENTER_STAGGER = 40;
+const ROAD_LABEL_OUTER_NORTH_OFFSET = -70;
+const ROAD_LABEL_CENTER_NORTH_OFFSET = -30;
+const ROAD_LABEL_LEADER_BOUNDARY_GAP = 6;
 const ROAD_LABEL_TOP_ROW_OFFSET = 5;
 const STRUCTURE_LABEL_TARGET_WIDTH_PX = 170;
 const STRUCTURE_LABEL_TARGET_HEIGHT_PX = 34;
@@ -57,31 +62,94 @@ const WIDE_LABEL_TARGET_WIDTH_PX = 210;
 const WIDE_LABEL_TARGET_HEIGHT_PX = 38;
 const WIDE_LABEL_SCREEN_WIDTH = WIDE_LABEL_TARGET_WIDTH_PX * LABEL_SCREEN_SCALE_PER_PIXEL;
 const WIDE_LABEL_SCREEN_HEIGHT = WIDE_LABEL_TARGET_HEIGHT_PX * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_CORRIDOR_LABEL_TARGET_WIDTH_PX = 300;
+const COAST_CORRIDOR_LABEL_TARGET_HEIGHT_PX = 42;
+const COAST_CORRIDOR_LABEL_SCREEN_WIDTH = COAST_CORRIDOR_LABEL_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_CORRIDOR_LABEL_SCREEN_HEIGHT = COAST_CORRIDOR_LABEL_TARGET_HEIGHT_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
 const PUBLIC_ACCESS_LABEL_TARGET_WIDTH_PX = 160;
 const PUBLIC_ACCESS_LABEL_TARGET_HEIGHT_PX = 30;
 const PUBLIC_ACCESS_LABEL_SCREEN_WIDTH = PUBLIC_ACCESS_LABEL_TARGET_WIDTH_PX
   * LABEL_SCREEN_SCALE_PER_PIXEL;
 const PUBLIC_ACCESS_LABEL_SCREEN_HEIGHT = PUBLIC_ACCESS_LABEL_TARGET_HEIGHT_PX
   * LABEL_SCREEN_SCALE_PER_PIXEL;
+const PUBLIC_ACCESS_STAGE_LABEL_TARGET_WIDTH_PX = 42;
+const PUBLIC_ACCESS_STAGE_LABEL_TARGET_HEIGHT_PX = 20;
+const PUBLIC_ACCESS_STAGE_LABEL_SCREEN_WIDTH = PUBLIC_ACCESS_STAGE_LABEL_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const PUBLIC_ACCESS_STAGE_LABEL_SCREEN_HEIGHT = PUBLIC_ACCESS_STAGE_LABEL_TARGET_HEIGHT_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const PUBLIC_ACCESS_SEQUENCE_LABEL_TARGET_WIDTH_PX = 360;
+const PUBLIC_ACCESS_SEQUENCE_LABEL_TARGET_HEIGHT_PX = 34;
+const PUBLIC_ACCESS_SEQUENCE_LABEL_SCREEN_WIDTH = PUBLIC_ACCESS_SEQUENCE_LABEL_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const PUBLIC_ACCESS_SEQUENCE_LABEL_SCREEN_HEIGHT = PUBLIC_ACCESS_SEQUENCE_LABEL_TARGET_HEIGHT_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
 const PUBLIC_ACCESS_LABEL_ALTITUDE = 8.5;
-const PUBLIC_ACCESS_LINE_OFFSET = 0.72;
-const PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH = 0.65;
-const PUBLIC_ACCESS_ARROW_LENGTH = 8;
-const PUBLIC_ACCESS_ARROW_WIDTH = 4;
-const PUBLIC_ACCESS_THRESHOLD_HALF_WIDTH = 2.2;
+const PUBLIC_GREEN_MASK_INSET = 1.5;
+const PUBLIC_GREEN_MASK_OFFSET = 0.58;
+const PUBLIC_ACCESS_RIBBON_OFFSET = 0.68;
+const PUBLIC_ACCESS_LINE_OFFSET = 0.74;
+const PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH = 4.2;
+const PUBLIC_ACCESS_DIAGRAM_HORIZONTAL_INSET = 7;
+const PUBLIC_ACCESS_DIAGRAM_LANE_INSET = 16;
+const PUBLIC_ACCESS_STAGE_GAP = 3;
+const PUBLIC_ACCESS_LABEL_LATERAL_OUTSET = 26;
+const PUBLIC_ACCESS_LEADER_START_OUTSET = 4.5;
+const PUBLIC_ACCESS_ARROW_LENGTH = 1.6;
+const PUBLIC_ACCESS_ARROW_WIDTH = 1;
 const FULL_GRID_OPACITY = 0.94;
-const SIGHTLINE_GRID_OPACITY = 0.42;
+const SIGHTLINE_GRID_OPACITY = 0.34;
 const STRUCTURE_LABEL_ALTITUDE = 10;
+const SIGHTLINE_RIBBON_OFFSET = 0.68;
 const SIGHTLINE_CORRIDOR_HALF_WIDTH = 4;
-const SIGHTLINE_ARROW_LENGTH = 18;
-const SIGHTLINE_ARROW_WIDTH = 10;
-const LONG_SIGHTLINE_ARROW_FRACTIONS = [0.32, 0.58, 0.84] as const;
-const SHORT_SIGHTLINE_ARROW_FRACTIONS = [0.92] as const;
+const SIGHTLINE_ARROW_LENGTH = 14;
+const SIGHTLINE_ARROW_WIDTH = 7;
+const LONG_SIGHTLINE_ARROW_FRACTIONS = [0.22, 0.44, 0.66, 0.88] as const;
+const MEDIUM_SIGHTLINE_ARROW_FRACTIONS = [0.3, 0.6, 0.9] as const;
+const SHORT_SIGHTLINE_ARROW_FRACTIONS = [0.46, 0.86] as const;
 const ROUTE_ARROW_LENGTH = 7;
 const ROUTE_ARROW_WIDTH = 3.5;
-const GRADE_AXIS_X = -12;
-const GRADE_TICK_HALF_WIDTH = 4;
-const COAST_DEBUG_HALF_SPAN = 64;
+const GRID_ORIENTATION_INSET = 18;
+const GRID_ORIENTATION_OUTSET = 18;
+const GRID_ORIENTATION_LENGTH = 28;
+const GRID_ORIENTATION_ARROW_LENGTH = 8;
+const GRID_ORIENTATION_ARROW_WIDTH = 4;
+const GRID_ORIENTATION_ORIGIN_RADIUS = 1.1;
+const GRID_ORIENTATION_LABEL_OFFSET_X = 98;
+const GRID_ORIENTATION_LABEL_ALTITUDE = 7.5;
+const GRADE_AXIS_X = -28;
+const GRADE_TICK_HALF_WIDTH = 3.5;
+const COAST_SECTOR_OFFSET = 0.62;
+const COAST_SCREEN_POST_SPACING = 24;
+const COAST_LABEL_LEADER_ROAD_GAP_CLEARANCE = 2;
+const COAST_BAND_ID_TARGET_WIDTH_PX = 36;
+const COAST_BAND_ID_TARGET_HEIGHT_PX = 18;
+const COAST_BAND_ID_SCREEN_WIDTH = COAST_BAND_ID_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_BAND_ID_SCREEN_HEIGHT = COAST_BAND_ID_TARGET_HEIGHT_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_BAND_ID_ALTITUDE = 8;
+const COAST_BAND_ID_INLAND_OFFSET = 41;
+const COAST_BAND_ID_PERSPECTIVE_X_SCALE = 0.9;
+const COAST_BAND_SCREENED_LEGEND_TARGET_WIDTH_PX = 200;
+const COAST_BAND_OPEN_LEGEND_TARGET_WIDTH_PX = 240;
+const COAST_BAND_LEGEND_TARGET_HEIGHT_PX = 30;
+const COAST_BAND_SCREENED_LEGEND_SCREEN_WIDTH = COAST_BAND_SCREENED_LEGEND_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_BAND_OPEN_LEGEND_SCREEN_WIDTH = COAST_BAND_OPEN_LEGEND_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_BAND_LEGEND_SCREEN_HEIGHT = COAST_BAND_LEGEND_TARGET_HEIGHT_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const COAST_BAND_LEGEND_ALTITUDE = 8;
+const COAST_BAND_LEGEND_SOUTH_OUTSET = 36;
+const COAST_BAND_SCREENED_LEGEND_X_INSET = 80;
+const COAST_BAND_OPEN_LEGEND_X_INSET = 75;
+const COAST_BAND_ARROW_LENGTH = 6;
+const COAST_BAND_ARROW_WIDTH = 3;
+const GRADE_LABEL_FRACTION = 0.52;
+const GRADE_LABEL_LATERAL_OFFSET = 54;
 const SPAWN_MARKER_RADIUS = 1;
 const RESET_MARKER_RADIUS = 1.4;
 const CAMERA_MARKER_HALF_WIDTH = 0.45;
@@ -97,18 +165,24 @@ const COLORS = {
   parcels: 0xd4a16b,
   collisions: 0xd96f69,
   publicGreen: 0x74b879,
-  publicAccess: 0xf6f0a8,
+  publicGreenMask: 0x315f3d,
+  publicAccess01: 0xf4cf57,
+  publicAccess02: 0x6fc9f1,
   route: 0xebd17a,
-  coast: 0x6cb0c0,
+  coastScreened: 0xe46d5f,
+  coastOpen: 0x4fd2bd,
   sightlineUphill: 0xe6b562,
   sightlineGreen: 0x82c889,
   sightlineCoast: 0x71b8c9,
+  grade: 0xaec7c1,
   marker: 0xf0e3a6,
   activeMarker: 0xf2c45f,
   labelBackground: 0x1d2421,
   labelText: 0xf2eee3,
   labelTextureTint: 0xfbf8ef,
 } as const;
+
+type PublicAccessTheme = 'access01' | 'access02';
 
 interface DebugLineMaterials {
   readonly roadGrid: LineBasicMaterial;
@@ -117,18 +191,29 @@ interface DebugLineMaterials {
   readonly parcels: LineBasicMaterial;
   readonly collisions: LineBasicMaterial;
   readonly publicGreen: LineBasicMaterial;
-  readonly publicAccess: LineBasicMaterial;
+  readonly publicAccess: Readonly<Record<PublicAccessTheme, LineBasicMaterial>>;
   readonly route: LineBasicMaterial;
-  readonly coast: LineBasicMaterial;
+  readonly coastScreened: LineBasicMaterial;
+  readonly coastOpen: LineBasicMaterial;
+  readonly grade: LineBasicMaterial;
   readonly marker: LineBasicMaterial;
   readonly activeMarker: LineBasicMaterial;
   readonly sightlines: Readonly<Record<SightlineSpec['theme'], LineBasicMaterial>>;
 }
 
+interface DebugRibbonMaterials {
+  readonly sightlines: Readonly<Record<SightlineSpec['theme'], MeshBasicMaterial>>;
+  readonly publicGreenMask: MeshBasicMaterial;
+  readonly publicAccess: Readonly<Record<PublicAccessTheme, MeshBasicMaterial>>;
+  readonly coastScreened: MeshBasicMaterial;
+  readonly coastOpen: MeshBasicMaterial;
+}
+
 interface DebugViewLayers {
+  readonly roadContext: Group;
+  readonly grid: Group;
   readonly overview: Group;
   readonly publicGreen: Group;
-  readonly publicGreenLabels: Group;
   readonly sightlines: Group;
 }
 
@@ -147,19 +232,19 @@ const SIGHTLINE_LABEL_CONFIG = {
   uphill: {
     text: '01  UPHILL AXIS  >>',
     fraction: 0.54,
-    lateralOffset: 36,
+    lateralOffset: 30,
     borderColor: COLORS.sightlineUphill,
   },
   green: {
     text: '02  GREEN VIEW  >>',
     fraction: 0.52,
-    lateralOffset: -30,
+    lateralOffset: -24,
     borderColor: COLORS.sightlineGreen,
   },
   coast: {
-    text: '03 SELECTIVE COAST VIEW >>',
-    fraction: 0.42,
-    lateralOffset: 90,
+    text: '03 SELECTIVE COAST CORRIDOR >>',
+    fraction: 0.28,
+    lateralOffset: 400,
     borderColor: COLORS.sightlineCoast,
   },
 } as const satisfies Readonly<Record<SightlineSpec['theme'], {
@@ -176,6 +261,7 @@ function appendLine(
 ): void {
   positions.push(...from, ...to);
 }
+
 
 function debugPoint(point: Vec2, yOffset: number): readonly [number, number, number] {
   return [point.x, sampleGroundHeight(point.x, point.z) + yOffset, point.z];
@@ -213,6 +299,148 @@ function appendTerrainPolyline(
     if (from === undefined || to === undefined) continue;
     appendTerrainLine(positions, from, to, yOffset);
   }
+}
+
+function appendTerrainRibbon(
+  positions: number[],
+  from: Vec2,
+  to: Vec2,
+  halfWidth: number,
+  yOffset: number,
+): void {
+  const deltaX = to.x - from.x;
+  const deltaZ = to.z - from.z;
+  const length = Math.hypot(deltaX, deltaZ);
+  if (length === 0) return;
+  const normalX = (-deltaZ / length) * halfWidth;
+  const normalZ = (deltaX / length) * halfWidth;
+  const sections = Math.max(1, Math.ceil(length / DEBUG_LINE_SAMPLE_SPACING));
+  for (let section = 0; section < sections; section += 1) {
+    const start = section / sections;
+    const end = (section + 1) / sections;
+    const startCenter = { x: from.x + deltaX * start, z: from.z + deltaZ * start };
+    const endCenter = { x: from.x + deltaX * end, z: from.z + deltaZ * end };
+    const startLeft = debugPoint({ x: startCenter.x + normalX, z: startCenter.z + normalZ }, yOffset);
+    const startRight = debugPoint({ x: startCenter.x - normalX, z: startCenter.z - normalZ }, yOffset);
+    const endLeft = debugPoint({ x: endCenter.x + normalX, z: endCenter.z + normalZ }, yOffset);
+    const endRight = debugPoint({ x: endCenter.x - normalX, z: endCenter.z - normalZ }, yOffset);
+    positions.push(...startLeft, ...endLeft, ...startRight);
+    positions.push(...startRight, ...endLeft, ...endRight);
+  }
+}
+function appendTerrainBoundsSurface(
+  positions: number[],
+  bounds: Bounds2,
+  yOffset: number,
+): void {
+  const width = bounds.maxX - bounds.minX;
+  const depth = bounds.maxZ - bounds.minZ;
+  if (width <= 0 || depth <= 0) return;
+  const xSections = Math.max(1, Math.ceil(width / DEBUG_LINE_SAMPLE_SPACING));
+  const zSections = Math.max(1, Math.ceil(depth / DEBUG_LINE_SAMPLE_SPACING));
+  for (let zSection = 0; zSection < zSections; zSection += 1) {
+    const minZ = bounds.minZ + (depth * zSection) / zSections;
+    const maxZ = bounds.minZ + (depth * (zSection + 1)) / zSections;
+    for (let xSection = 0; xSection < xSections; xSection += 1) {
+      const minX = bounds.minX + (width * xSection) / xSections;
+      const maxX = bounds.minX + (width * (xSection + 1)) / xSections;
+      const northWest = debugPoint({ x: minX, z: minZ }, yOffset);
+      const northEast = debugPoint({ x: maxX, z: minZ }, yOffset);
+      const southWest = debugPoint({ x: minX, z: maxZ }, yOffset);
+      const southEast = debugPoint({ x: maxX, z: maxZ }, yOffset);
+      positions.push(...northWest, ...southWest, ...northEast);
+      positions.push(...northEast, ...southWest, ...southEast);
+    }
+  }
+}
+
+
+
+function roadCenterlinePoints(road: RoadSpec): readonly [Vec2, ...Vec2[]] {
+  return [road.centerline.from, ...road.centerline.via, road.centerline.to];
+}
+
+function horizontalPolylineIntersectionX(
+  points: readonly [Vec2, ...Vec2[]],
+  z: number,
+): number | null {
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1];
+    const to = points[index];
+    if (from === undefined || to === undefined) continue;
+    const deltaZ = to.z - from.z;
+    if (deltaZ === 0) continue;
+    const fraction = (z - from.z) / deltaZ;
+    if (fraction < 0 || fraction > 1) continue;
+    return from.x + (to.x - from.x) * fraction;
+  }
+  return null;
+}
+
+function pointOnPolyline(points: readonly [Vec2, ...Vec2[]], fraction: number): Vec2 {
+  let totalLength = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1];
+    const to = points[index];
+    if (from === undefined || to === undefined) continue;
+    totalLength += Math.hypot(to.x - from.x, to.z - from.z);
+  }
+  if (totalLength === 0) return points[0];
+
+  const targetLength = Math.min(1, Math.max(0, fraction)) * totalLength;
+  let traversed = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1];
+    const to = points[index];
+    if (from === undefined || to === undefined) continue;
+    const segmentLength = Math.hypot(to.x - from.x, to.z - from.z);
+    if (segmentLength === 0) continue;
+    if (traversed + segmentLength >= targetLength) {
+      const segmentFraction = (targetLength - traversed) / segmentLength;
+      return {
+        x: from.x + (to.x - from.x) * segmentFraction,
+        z: from.z + (to.z - from.z) * segmentFraction,
+      };
+    }
+    traversed += segmentLength;
+  }
+  return points[points.length - 1] ?? points[0];
+}
+
+interface PolylineProjection {
+  readonly point: Vec2;
+  readonly tangent: Vec2;
+  readonly distanceSquared: number;
+}
+
+function projectPointToPolyline(
+  query: Vec2,
+  points: readonly [Vec2, ...Vec2[]],
+): PolylineProjection | null {
+  let closest: PolylineProjection | null = null;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1];
+    const to = points[index];
+    if (from === undefined || to === undefined) continue;
+    const deltaX = to.x - from.x;
+    const deltaZ = to.z - from.z;
+    const lengthSquared = deltaX * deltaX + deltaZ * deltaZ;
+    if (lengthSquared === 0) continue;
+    const fraction = Math.min(1, Math.max(0, (
+      (query.x - from.x) * deltaX + (query.z - from.z) * deltaZ
+    ) / lengthSquared));
+    const point = { x: from.x + deltaX * fraction, z: from.z + deltaZ * fraction };
+    const distanceSquared = (query.x - point.x) ** 2 + (query.z - point.z) ** 2;
+    if (closest === null || distanceSquared < closest.distanceSquared) {
+      const length = Math.sqrt(lengthSquared);
+      closest = {
+        point,
+        tangent: { x: deltaX / length, z: deltaZ / length },
+        distanceSquared,
+      };
+    }
+  }
+  return closest;
 }
 
 function appendBounds(
@@ -274,19 +502,6 @@ function appendTerrainCorridor(
   }
 }
 
-function appendTerrainPolylineCorridor(
-  positions: number[],
-  points: readonly Vec2[],
-  halfWidth: number,
-  yOffset: number,
-): void {
-  for (let index = 1; index < points.length; index += 1) {
-    const from = points[index - 1];
-    const to = points[index];
-    if (from === undefined || to === undefined) continue;
-    appendTerrainCorridor(positions, from, to, halfWidth, yOffset);
-  }
-}
 
 function appendTerrainArrowhead(
   positions: number[],
@@ -341,46 +556,6 @@ function segmentLabelPosition(
   };
 }
 
-function publicAccessChain(endpoint: Vec2, road: RoadSpec): readonly [Vec2, Vec2, Vec2] {
-  if (road.orientation === 'east-west') {
-    const centerZ = (road.centerline.from.z + road.centerline.to.z) * 0.5;
-    const side = endpoint.z >= centerZ ? 1 : -1;
-    return [
-      endpoint,
-      { x: endpoint.x, z: centerZ + road.width * 0.5 * side },
-      { x: endpoint.x, z: centerZ },
-    ];
-  }
-  const centerX = (road.centerline.from.x + road.centerline.to.x) * 0.5;
-  const side = endpoint.x >= centerX ? 1 : -1;
-  return [
-    endpoint,
-    { x: centerX + road.width * 0.5 * side, z: endpoint.z },
-    { x: centerX, z: endpoint.z },
-  ];
-}
-
-function appendPublicAccessThreshold(
-  positions: number[],
-  roadEdge: Vec2,
-  road: RoadSpec,
-): void {
-  if (road.orientation === 'east-west') {
-    appendTerrainLine(
-      positions,
-      { x: roadEdge.x - PUBLIC_ACCESS_THRESHOLD_HALF_WIDTH, z: roadEdge.z },
-      { x: roadEdge.x + PUBLIC_ACCESS_THRESHOLD_HALF_WIDTH, z: roadEdge.z },
-      PUBLIC_ACCESS_LINE_OFFSET + 0.04,
-    );
-    return;
-  }
-  appendTerrainLine(
-    positions,
-    { x: roadEdge.x, z: roadEdge.z - PUBLIC_ACCESS_THRESHOLD_HALF_WIDTH },
-    { x: roadEdge.x, z: roadEdge.z + PUBLIC_ACCESS_THRESHOLD_HALF_WIDTH },
-    PUBLIC_ACCESS_LINE_OFFSET + 0.04,
-  );
-}
 
 function insetBounds(bounds: Bounds2, inset: number): Bounds2 | null {
   const value = {
@@ -409,6 +584,24 @@ function createLineObject(
   return lines;
 }
 
+function createRibbonObject(
+  resources: ResourceRegistry,
+  group: string,
+  name: string,
+  positions: readonly number[],
+  material: MeshBasicMaterial,
+  renderOrder = 990,
+): Mesh {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geometry.computeBoundingSphere();
+  resources.register(geometry, group);
+  const ribbon = new Mesh(geometry, material);
+  ribbon.name = name;
+  ribbon.renderOrder = renderOrder;
+  return ribbon;
+}
+
 function registerLineMaterial(
   resources: ResourceRegistry,
   group: string,
@@ -424,6 +617,22 @@ function registerLineMaterial(
   }), group);
 }
 
+function registerRibbonMaterial(
+  resources: ResourceRegistry,
+  group: string,
+  color: number,
+  opacity: number,
+): MeshBasicMaterial {
+  return resources.register(new MeshBasicMaterial({
+    color: new Color(color),
+    depthTest: false,
+    depthWrite: false,
+    opacity,
+    side: DoubleSide,
+    transparent: true,
+  }), group);
+}
+
 function createDebugLineMaterials(resources: ResourceRegistry, group: string): DebugLineMaterials {
   return {
     roadGrid: registerLineMaterial(resources, group, COLORS.roadGrid, FULL_GRID_OPACITY),
@@ -432,9 +641,14 @@ function createDebugLineMaterials(resources: ResourceRegistry, group: string): D
     parcels: registerLineMaterial(resources, group, COLORS.parcels),
     collisions: registerLineMaterial(resources, group, COLORS.collisions, 0.82),
     publicGreen: registerLineMaterial(resources, group, COLORS.publicGreen),
-    publicAccess: registerLineMaterial(resources, group, COLORS.publicAccess),
+    publicAccess: {
+      access01: registerLineMaterial(resources, group, COLORS.publicAccess01),
+      access02: registerLineMaterial(resources, group, COLORS.publicAccess02),
+    },
     route: registerLineMaterial(resources, group, COLORS.route),
-    coast: registerLineMaterial(resources, group, COLORS.coast, 0.9),
+    coastScreened: registerLineMaterial(resources, group, COLORS.coastScreened),
+    coastOpen: registerLineMaterial(resources, group, COLORS.coastOpen),
+    grade: registerLineMaterial(resources, group, COLORS.grade, 0.9),
     marker: registerLineMaterial(resources, group, COLORS.marker, 0.8),
     activeMarker: registerLineMaterial(resources, group, COLORS.activeMarker, 0.9),
     sightlines: {
@@ -442,6 +656,23 @@ function createDebugLineMaterials(resources: ResourceRegistry, group: string): D
       green: registerLineMaterial(resources, group, COLORS.sightlineGreen),
       coast: registerLineMaterial(resources, group, COLORS.sightlineCoast),
     },
+  };
+}
+
+function createDebugRibbonMaterials(resources: ResourceRegistry, group: string): DebugRibbonMaterials {
+  return {
+    publicGreenMask: registerRibbonMaterial(resources, group, COLORS.publicGreenMask, 0.9),
+    publicAccess: {
+      access01: registerRibbonMaterial(resources, group, COLORS.publicAccess01, 0.9),
+      access02: registerRibbonMaterial(resources, group, COLORS.publicAccess02, 0.9),
+    },
+    sightlines: {
+      uphill: registerRibbonMaterial(resources, group, COLORS.sightlineUphill, 0.16),
+      green: registerRibbonMaterial(resources, group, COLORS.sightlineGreen, 0.18),
+      coast: registerRibbonMaterial(resources, group, COLORS.sightlineCoast, 0.18),
+    },
+    coastScreened: registerRibbonMaterial(resources, group, COLORS.coastScreened, 0.82),
+    coastOpen: registerRibbonMaterial(resources, group, COLORS.coastOpen, 0.86),
   };
 }
 
@@ -507,24 +738,122 @@ function createDebugLabel(
   label.renderOrder = 1_200;
   return label;
 }
+type StaticCaptureViewName = Exclude<WorldDebugViewName, 'grid'>;
+
+interface StaticProjectedLabel {
+  readonly name: string;
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+function createStaticCaptureCamera(view: StaticCaptureViewName): PerspectiveCamera {
+  const camera = new PerspectiveCamera(
+    APP_CONFIG.camera.fov,
+    EVIDENCE_CAPTURE_WIDTH_PX / EVIDENCE_CAPTURE_HEIGHT_PX,
+    APP_CONFIG.camera.near,
+    APP_CONFIG.camera.far,
+  );
+  camera.up.set(...APP_CONFIG.camera.worldUp);
+  if (view === 'public-green') {
+    const bounds = DISTRICT_DATA.publicGreen.bounds;
+    const x = (bounds.minX + bounds.maxX) * 0.5;
+    const z = (bounds.minZ + bounds.maxZ) * 0.5;
+    const groundHeight = sampleGroundHeight(x, z);
+    camera.position.set(x, groundHeight + 125, z);
+    camera.lookAt(x, groundHeight, z);
+  } else {
+    const bounds = DISTRICT_DATA.worldBounds;
+    const x = (bounds.minX + bounds.maxX) * 0.5;
+    const northZ = bounds.minZ - 35;
+    const targetZ = -65;
+    camera.position.set(x, sampleGroundHeight(x, northZ) + 240, northZ);
+    camera.lookAt(x, sampleGroundHeight(x, targetZ), targetZ);
+  }
+  camera.rotation.z = APP_CONFIG.camera.roll;
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  return camera;
+}
+
+function assertStaticCaptureLabelLayout(
+  view: StaticCaptureViewName,
+  specs: readonly DebugLabelSpec[],
+): void {
+  const camera = createStaticCaptureCamera(view);
+  const worldPosition = new Vector3();
+  const projected = specs.map((spec): StaticProjectedLabel => {
+    worldPosition.set(
+      spec.position.x,
+      sampleGroundHeight(spec.position.x, spec.position.z) + spec.altitude,
+      spec.position.z,
+    ).project(camera);
+    const centerX = ((worldPosition.x + 1) * EVIDENCE_CAPTURE_WIDTH_PX) * 0.5;
+    const centerY = ((1 - worldPosition.y) * EVIDENCE_CAPTURE_HEIGHT_PX) * 0.5;
+    const halfWidth = (spec.screenWidth / LABEL_SCREEN_SCALE_PER_PIXEL) * 0.5;
+    const halfHeight = (spec.screenHeight / LABEL_SCREEN_SCALE_PER_PIXEL) * 0.5;
+    return {
+      name: spec.name,
+      left: centerX - halfWidth,
+      right: centerX + halfWidth,
+      top: centerY - halfHeight,
+      bottom: centerY + halfHeight,
+    };
+  });
+  for (const label of projected) {
+    if (label.left < 0 || label.right > EVIDENCE_CAPTURE_WIDTH_PX
+      || label.top < 0 || label.bottom > EVIDENCE_CAPTURE_HEIGHT_PX) {
+      throw new Error(`Static ${view} label ${label.name} falls outside 1246x552 capture.`);
+    }
+  }
+  for (let firstIndex = 0; firstIndex < projected.length; firstIndex += 1) {
+    const first = projected[firstIndex];
+    if (first === undefined) continue;
+    for (let secondIndex = firstIndex + 1; secondIndex < projected.length; secondIndex += 1) {
+      const second = projected[secondIndex];
+      if (second === undefined) continue;
+      const separated = first.right + STATIC_LABEL_COLLISION_GAP_PX <= second.left
+        || second.right + STATIC_LABEL_COLLISION_GAP_PX <= first.left
+        || first.bottom + STATIC_LABEL_COLLISION_GAP_PX <= second.top
+        || second.bottom + STATIC_LABEL_COLLISION_GAP_PX <= first.top;
+      if (!separated) {
+        throw new Error(
+          `Static ${view} labels ${first.name} and ${second.name} collide at 1246x552.`,
+        );
+      }
+    }
+  }
+}
+
+
+function roadNorthEnd(road: RoadSpec): Vec2 {
+  const points = roadCenterlinePoints(road);
+  let northEnd = points[0];
+  for (const point of points) {
+    if (point.z < northEnd.z) northEnd = point;
+  }
+  return northEnd;
+}
+
 
 function roadLabelPosition(road: RoadSpec): Vec2 {
-  const centerX = (road.centerline.from.x + road.centerline.to.x) * 0.5;
-  const centerZ = (road.centerline.from.z + road.centerline.to.z) * 0.5;
+  const points = roadCenterlinePoints(road);
+  const center = pointOnPolyline(points, 0.5);
   if (road.orientation === 'east-west') {
     const eastColumn = road.id === 'ningwuguan'
       || road.id === 'zhengyangguan'
       || road.id === 'juyongguan';
     return {
       x: eastColumn ? ROAD_LABEL_COLUMN_X : -ROAD_LABEL_COLUMN_X,
-      z: centerZ + (road.id === 'shaoguan' ? ROAD_LABEL_TOP_ROW_OFFSET : 0),
+      z: center.z + (road.id === 'shaoguan' ? ROAD_LABEL_TOP_ROW_OFFSET : 0),
     };
   }
-  const northEndZ = Math.min(road.centerline.from.z, road.centerline.to.z);
+  const northEnd = roadNorthEnd(road);
   return {
-    x: centerX,
-    z: northEndZ + (road.id === 'hangu-pass'
-      ? ROAD_LABEL_CENTER_STAGGER
+    x: northEnd.x,
+    z: northEnd.z + (road.id === 'hangu-pass'
+      ? ROAD_LABEL_CENTER_NORTH_OFFSET
       : ROAD_LABEL_OUTER_NORTH_OFFSET),
   };
 }
@@ -533,11 +862,12 @@ function createRoadLabel(
   resources: ResourceRegistry,
   group: string,
   road: RoadSpec,
+  position: Vec2,
 ): Sprite {
   return createDebugLabel(resources, group, {
     name: `debug:road-label:${road.id}`,
     text: road.name.toUpperCase(),
-    position: roadLabelPosition(road),
+    position,
     altitude: ROAD_LABEL_ALTITUDE,
     screenWidth: ROAD_LABEL_SCREEN_WIDTH,
     screenHeight: ROAD_LABEL_SCREEN_HEIGHT,
@@ -546,34 +876,56 @@ function createRoadLabel(
   });
 }
 
-function createSightlineLabel(
-  resources: ResourceRegistry,
-  group: string,
-  sightline: SightlineSpec,
-): Sprite {
+function roadLabelLeaderAnchor(road: RoadSpec, labelPosition: Vec2): Vec2 | null {
+  if (road.orientation === 'east-west') return null;
+  return {
+    x: labelPosition.x,
+    z: DISTRICT_DATA.worldBounds.minZ - ROAD_LABEL_LEADER_BOUNDARY_GAP,
+  };
+}
+
+interface SightlineLabelLayout {
+  readonly anchor: Vec2;
+  readonly position: Vec2;
+}
+
+function sightlineLabelLayout(sightline: SightlineSpec): SightlineLabelLayout {
   const config = SIGHTLINE_LABEL_CONFIG[sightline.theme];
-  return createDebugLabel(resources, group, {
-    name: `debug:sightline-label:${sightline.id}`,
-    text: config.text,
+  const anchor = {
+    x: sightline.from.x + (sightline.toward.x - sightline.from.x) * config.fraction,
+    z: sightline.from.z + (sightline.toward.z - sightline.from.z) * config.fraction,
+  };
+  return {
+    anchor,
     position: segmentLabelPosition(
       sightline.from,
       sightline.toward,
       config.fraction,
       config.lateralOffset,
     ),
-    altitude: STRUCTURE_LABEL_ALTITUDE,
-    screenWidth: sightline.theme === 'coast'
-      ? WIDE_LABEL_SCREEN_WIDTH
-      : STRUCTURE_LABEL_SCREEN_WIDTH,
-    screenHeight: sightline.theme === 'coast'
-      ? WIDE_LABEL_SCREEN_HEIGHT
-      : STRUCTURE_LABEL_SCREEN_HEIGHT,
-    borderColor: config.borderColor,
-    fontSize: sightline.theme === 'coast' ? 62 : 68,
-  });
+  };
 }
 
-function appendSightlineArrow(
+function createSightlineLabelSpec(sightline: SightlineSpec): DebugLabelSpec {
+  const config = SIGHTLINE_LABEL_CONFIG[sightline.theme];
+  const layout = sightlineLabelLayout(sightline);
+  return {
+    name: `debug:sightline-label:${sightline.id}`,
+    text: config.text,
+    position: layout.position,
+    altitude: STRUCTURE_LABEL_ALTITUDE,
+    screenWidth: sightline.theme === 'coast'
+      ? COAST_CORRIDOR_LABEL_SCREEN_WIDTH
+      : STRUCTURE_LABEL_SCREEN_WIDTH,
+    screenHeight: sightline.theme === 'coast'
+      ? COAST_CORRIDOR_LABEL_SCREEN_HEIGHT
+      : STRUCTURE_LABEL_SCREEN_HEIGHT,
+    borderColor: config.borderColor,
+    fontSize: sightline.theme === 'coast' ? 58 : 68,
+  };
+}
+
+function appendSightlineGeometry(
   positions: number[],
   sightline: SightlineSpec,
 ): void {
@@ -584,13 +936,25 @@ function appendSightlineArrow(
     SIGHTLINE_CORRIDOR_HALF_WIDTH,
     SIGHTLINE_OFFSET,
   );
-  const length = Math.hypot(
-    sightline.toward.x - sightline.from.x,
-    sightline.toward.z - sightline.from.z,
-  );
-  const fractions = length > 80
+  const deltaX = sightline.toward.x - sightline.from.x;
+  const deltaZ = sightline.toward.z - sightline.from.z;
+  const length = Math.hypot(deltaX, deltaZ);
+  if (length === 0) return;
+  const normalX = (-deltaZ / length) * SIGHTLINE_CORRIDOR_HALF_WIDTH;
+  const normalZ = (deltaX / length) * SIGHTLINE_CORRIDOR_HALF_WIDTH;
+  for (const endpoint of [sightline.from, sightline.toward]) {
+    appendTerrainLine(
+      positions,
+      { x: endpoint.x - normalX, z: endpoint.z - normalZ },
+      { x: endpoint.x + normalX, z: endpoint.z + normalZ },
+      SIGHTLINE_OFFSET + 0.03,
+    );
+  }
+  const fractions = length > 120
     ? LONG_SIGHTLINE_ARROW_FRACTIONS
-    : SHORT_SIGHTLINE_ARROW_FRACTIONS;
+    : length > 55
+      ? MEDIUM_SIGHTLINE_ARROW_FRACTIONS
+      : SHORT_SIGHTLINE_ARROW_FRACTIONS;
   for (const fraction of fractions) {
     appendTerrainArrowhead(
       positions,
@@ -602,8 +966,155 @@ function appendSightlineArrow(
       SIGHTLINE_ARROW_WIDTH,
     );
   }
-  appendCross(positions, sightline.from, 1.3, SIGHTLINE_OFFSET + 0.04);
-  appendCross(positions, sightline.toward, 1.6, SIGHTLINE_OFFSET + 0.04);
+  appendCross(positions, sightline.from, 1.5, SIGHTLINE_OFFSET + 0.05);
+  appendCross(positions, sightline.toward, 1.8, SIGHTLINE_OFFSET + 0.05);
+}
+
+function appendElevatedLabelLeader(
+  positions: number[],
+  anchor: Vec2,
+  labelPosition: Vec2,
+  groundOffset: number,
+  labelAltitude: number,
+  gap?: {
+    readonly before: Vec2;
+    readonly after: Vec2;
+  },
+): void {
+  if (gap === undefined) {
+    appendTerrainLine(positions, anchor, labelPosition, groundOffset);
+  } else {
+    appendTerrainLine(positions, anchor, gap.before, groundOffset);
+    appendTerrainLine(positions, gap.after, labelPosition, groundOffset);
+  }
+  const labelGround = sampleGroundHeight(labelPosition.x, labelPosition.z);
+  appendLine(
+    positions,
+    debugPoint(labelPosition, groundOffset),
+    [labelPosition.x, labelGround + labelAltitude - 1.2, labelPosition.z],
+  );
+  appendCross(positions, anchor, 0.7, groundOffset + 0.03);
+}
+
+function appendSightlineLabelLeader(positions: number[], sightline: SightlineSpec): void {
+  const layout = sightlineLabelLayout(sightline);
+  let gap: { readonly before: Vec2; readonly after: Vec2 } | undefined;
+  if (sightline.theme === 'coast') {
+    const crossingRoad = ROAD_SPECS.find(({ id }) => id === 'wushengguan');
+    const crossingX = crossingRoad === undefined
+      ? null
+      : horizontalPolylineIntersectionX(roadCenterlinePoints(crossingRoad), layout.anchor.z);
+    const direction = Math.sign(layout.position.x - layout.anchor.x);
+    const minimumX = Math.min(layout.anchor.x, layout.position.x);
+    const maximumX = Math.max(layout.anchor.x, layout.position.x);
+    if (crossingRoad !== undefined && crossingX !== null && direction !== 0
+      && crossingX > minimumX && crossingX < maximumX) {
+      const halfWidth = crossingRoad.width * 0.5 + crossingRoad.sidewalkWidth
+        + COAST_LABEL_LEADER_ROAD_GAP_CLEARANCE;
+      gap = {
+        before: { x: crossingX - direction * halfWidth, z: layout.anchor.z },
+        after: { x: crossingX + direction * halfWidth, z: layout.anchor.z },
+      };
+    }
+  }
+  appendElevatedLabelLeader(
+    positions,
+    layout.anchor,
+    layout.position,
+    SIGHTLINE_OFFSET + 0.12,
+    STRUCTURE_LABEL_ALTITUDE,
+    gap,
+  );
+}
+
+interface CoastScreenedSector {
+  readonly id: string;
+  readonly minX: number;
+  readonly maxX: number;
+}
+
+function createCoastScreenedSectors(): readonly CoastScreenedSector[] {
+  const { minX, maxX } = DISTRICT_DATA.coast.seaBounds;
+  const openings = [...DISTRICT_DATA.coast.screen.openings]
+    .sort((first, second) => first.minX - second.minX);
+  const sectors: CoastScreenedSector[] = [];
+  let cursor = minX;
+  for (const opening of openings) {
+    const openingMinX = Math.max(minX, opening.minX);
+    const openingMaxX = Math.min(maxX, opening.maxX);
+    if (openingMinX > cursor) {
+      sectors.push({
+        id: `S${sectors.length + 1}`,
+        minX: cursor,
+        maxX: openingMinX,
+      });
+    }
+    cursor = Math.max(cursor, openingMaxX);
+  }
+  if (cursor < maxX) {
+    sectors.push({
+      id: `S${sectors.length + 1}`,
+      minX: cursor,
+      maxX,
+    });
+  }
+  return sectors;
+}
+
+function appendCoastScreenSectorLines(
+  positions: number[],
+  sector: CoastScreenedSector,
+): void {
+  appendBounds(positions, {
+    minX: sector.minX,
+    maxX: sector.maxX,
+    minZ: DISTRICT_DATA.coast.screen.z,
+    maxZ: DISTRICT_DATA.coast.seaBounds.maxZ,
+  }, COAST_SECTOR_OFFSET + 0.04);
+  const { z, height } = DISTRICT_DATA.coast.screen;
+  const from = { x: sector.minX, z };
+  const to = { x: sector.maxX, z };
+  appendTerrainLine(positions, from, to, COAST_SECTOR_OFFSET);
+  appendTerrainLine(positions, from, to, COAST_SECTOR_OFFSET + height);
+  const postSections = Math.max(1, Math.ceil((sector.maxX - sector.minX) / COAST_SCREEN_POST_SPACING));
+  for (let section = 0; section <= postSections; section += 1) {
+    const x = sector.minX + ((sector.maxX - sector.minX) * section) / postSections;
+    const ground = sampleGroundHeight(x, z) + COAST_SECTOR_OFFSET;
+    appendLine(positions, [x, ground, z], [x, ground + height, z]);
+  }
+}
+
+function appendCoastOpenViewLines(
+  positions: number[],
+  minX: number,
+  maxX: number,
+): void {
+  const from = {
+    x: (minX + maxX) * 0.5,
+    z: DISTRICT_DATA.coast.screen.z,
+  };
+  const toward = {
+    x: from.x,
+    z: DISTRICT_DATA.coast.seaBounds.maxZ,
+  };
+  appendBounds(positions, {
+    minX,
+    maxX,
+    minZ: from.z,
+    maxZ: toward.z,
+  }, COAST_SECTOR_OFFSET + 0.04);
+  appendTerrainLine(positions, from, toward, COAST_SECTOR_OFFSET + 0.07);
+  for (const fraction of SHORT_SIGHTLINE_ARROW_FRACTIONS) {
+    appendTerrainArrowhead(
+      positions,
+      from,
+      toward,
+      fraction,
+      COAST_SECTOR_OFFSET + 0.09,
+      COAST_BAND_ARROW_LENGTH,
+      COAST_BAND_ARROW_WIDTH,
+    );
+  }
 }
 
 function createActiveAnchorMarker(
@@ -702,11 +1213,12 @@ class WorldDebugControllerImplementation implements WorldDebugController {
   setView(view: WorldDebugViewName | null): void {
     if (!this.developmentEnabled || this.layers === null || this.roadGridMaterial === null) return;
     this.selectedView = view;
-    const fullOverview = view === null || view === 'grid';
-    this.layers.overview.visible = fullOverview;
-    this.layers.publicGreen.visible = fullOverview || view === 'public-green';
-    this.layers.publicGreenLabels.visible = view === null || view === 'public-green';
-    this.layers.sightlines.visible = fullOverview || view === 'sightlines';
+    const unfiltered = view === null;
+    this.layers.roadContext.visible = unfiltered || view === 'grid' || view === 'sightlines';
+    this.layers.grid.visible = unfiltered || view === 'grid';
+    this.layers.overview.visible = unfiltered;
+    this.layers.publicGreen.visible = unfiltered || view === 'public-green';
+    this.layers.sightlines.visible = unfiltered || view === 'sightlines';
     this.roadGridMaterial.opacity = view === 'sightlines'
       ? SIGHTLINE_GRID_OPACITY
       : FULL_GRID_OPACITY;
@@ -742,13 +1254,15 @@ export function createWorldDebug(
   }
 
   const materials = createDebugLineMaterials(resources, group);
+  const ribbonMaterials = createDebugRibbonMaterials(resources, group);
+  const publicGreenProjectionLabels: DebugLabelSpec[] = [];
+  const sightlineProjectionLabels: DebugLabelSpec[] = [];
 
   const roadGridPositions: number[] = [];
   for (const road of ROAD_SPECS) {
-    appendTerrainLine(
+    appendTerrainPolyline(
       roadGridPositions,
-      road.centerline.from,
-      road.centerline.to,
+      roadCenterlinePoints(road),
       DEBUG_SURFACE_OFFSET,
     );
   }
@@ -759,57 +1273,122 @@ export function createWorldDebug(
     roadGridPositions,
     materials.roadGrid,
   ));
+  const gridOrientationPositions: number[] = [];
+  const gridOrientationSouth = {
+    x: DISTRICT_DATA.worldBounds.minX + GRID_ORIENTATION_INSET,
+    z: DISTRICT_DATA.worldBounds.maxZ + GRID_ORIENTATION_OUTSET + GRID_ORIENTATION_LENGTH,
+  };
+  const gridOrientationNorth = {
+    x: gridOrientationSouth.x,
+    z: gridOrientationSouth.z - GRID_ORIENTATION_LENGTH,
+  };
+  appendTerrainLine(
+    gridOrientationPositions,
+    gridOrientationSouth,
+    gridOrientationNorth,
+    DEBUG_SURFACE_OFFSET + 0.08,
+  );
+  appendTerrainArrowhead(
+    gridOrientationPositions,
+    gridOrientationSouth,
+    gridOrientationNorth,
+    0.98,
+    DEBUG_SURFACE_OFFSET + 0.08,
+    GRID_ORIENTATION_ARROW_LENGTH,
+    GRID_ORIENTATION_ARROW_WIDTH,
+  );
+  appendCross(
+    gridOrientationPositions,
+    gridOrientationSouth,
+    GRID_ORIENTATION_ORIGIN_RADIUS,
+    DEBUG_SURFACE_OFFSET + 0.1,
+  );
+  root.add(createLineObject(
+    resources,
+    group,
+    'debug:grid-grade-orientation',
+    gridOrientationPositions,
+    materials.grade,
+  ));
+  root.add(createDebugLabel(resources, group, {
+    name: 'debug:grid-orientation-label',
+    text: 'NORTH / UPHILL',
+    position: {
+      x: gridOrientationSouth.x + GRID_ORIENTATION_LABEL_OFFSET_X,
+      z: (gridOrientationSouth.z + gridOrientationNorth.z) * 0.5,
+    },
+    altitude: GRID_ORIENTATION_LABEL_ALTITUDE,
+    screenWidth: PUBLIC_ACCESS_LABEL_SCREEN_WIDTH,
+    screenHeight: PUBLIC_ACCESS_LABEL_SCREEN_HEIGHT,
+    borderColor: COLORS.grade,
+    fontSize: 60,
+  }));
+
   const gradeSamplePositions: number[] = [];
-  const transverseRoads = ROAD_SPECS.filter(({ orientation }) => orientation === 'east-west');
-  const northernTransverse = transverseRoads[0];
-  const southernTransverse = transverseRoads[transverseRoads.length - 1];
-  if (northernTransverse !== undefined && southernTransverse !== undefined) {
-    const north = {
-      x: GRADE_AXIS_X,
-      z: (northernTransverse.centerline.from.z + northernTransverse.centerline.to.z) * 0.5,
-    };
-    const south = {
-      x: GRADE_AXIS_X,
-      z: (southernTransverse.centerline.from.z + southernTransverse.centerline.to.z) * 0.5,
-    };
-    appendTerrainLine(gradeSamplePositions, south, north, DEBUG_SURFACE_OFFSET + 0.04);
-    appendTerrainArrowhead(
-      gradeSamplePositions,
-      south,
-      north,
-      0.94,
-      DEBUG_SURFACE_OFFSET + 0.04,
-      SIGHTLINE_ARROW_LENGTH,
-      SIGHTLINE_ARROW_WIDTH,
-    );
-    for (const road of transverseRoads) {
-      const z = (road.centerline.from.z + road.centerline.to.z) * 0.5;
-      appendTerrainLine(
+  const transverseSamples = ROAD_SPECS
+    .filter(({ orientation }) => orientation === 'east-west')
+    .map((road) => {
+      const centerline = roadCenterlinePoints(road);
+      const midpoint = pointOnPolyline(centerline, 0.5);
+      return projectPointToPolyline({ x: GRADE_AXIS_X, z: midpoint.z }, centerline)?.point ?? midpoint;
+    })
+    .sort((first, second) => first.z - second.z);
+  const north = transverseSamples[0];
+  const south = transverseSamples[transverseSamples.length - 1];
+  if (north !== undefined && south !== undefined) {
+    appendTerrainLine(gradeSamplePositions, south, north, SIGHTLINE_OFFSET + 0.04);
+    for (const fraction of MEDIUM_SIGHTLINE_ARROW_FRACTIONS) {
+      appendTerrainArrowhead(
         gradeSamplePositions,
-        { x: GRADE_AXIS_X - GRADE_TICK_HALF_WIDTH, z },
-        { x: GRADE_AXIS_X + GRADE_TICK_HALF_WIDTH, z },
-        DEBUG_SURFACE_OFFSET + 0.06,
+        south,
+        north,
+        fraction,
+        SIGHTLINE_OFFSET + 0.04,
+        SIGHTLINE_ARROW_LENGTH,
+        SIGHTLINE_ARROW_WIDTH,
       );
     }
+    for (const sample of transverseSamples) {
+      appendTerrainLine(
+        gradeSamplePositions,
+        { x: sample.x - GRADE_TICK_HALF_WIDTH, z: sample.z },
+        { x: sample.x + GRADE_TICK_HALF_WIDTH, z: sample.z },
+        SIGHTLINE_OFFSET + 0.06,
+      );
+    }
+    appendCross(gradeSamplePositions, north, 1.3, SIGHTLINE_OFFSET + 0.08);
+    appendCross(gradeSamplePositions, south, 1.3, SIGHTLINE_OFFSET + 0.08);
     const gradeRise = sampleGroundHeight(north.x, north.z) - sampleGroundHeight(south.x, south.z);
     const gradeSign = gradeRise >= 0 ? '+' : '';
-    root.add(createDebugLabel(resources, group, {
+    const gradeDistance = Math.hypot(north.x - south.x, north.z - south.z);
+    const gradeAnchor = pointOnPolyline([south, north], GRADE_LABEL_FRACTION);
+    const gradeLabelPosition = { x: GRADE_AXIS_X - GRADE_LABEL_LATERAL_OFFSET, z: gradeAnchor.z };
+    appendElevatedLabelLeader(
+      gradeSamplePositions,
+      gradeAnchor,
+      gradeLabelPosition,
+      SIGHTLINE_OFFSET + 0.12,
+      STRUCTURE_LABEL_ALTITUDE,
+    );
+    const gradeLabelSpec: DebugLabelSpec = {
       name: 'debug:grade-label',
-      text: `GRADE ${gradeSign}${gradeRise.toFixed(1)} m / NORTH UPHILL`,
-      position: { x: -220, z: -215 },
+      text: `GRADE ${gradeSign}${gradeRise.toFixed(1)} m / ${gradeDistance.toFixed(0)} m / NORTH UPHILL`,
+      position: gradeLabelPosition,
       altitude: STRUCTURE_LABEL_ALTITUDE,
       screenWidth: WIDE_LABEL_SCREEN_WIDTH,
       screenHeight: WIDE_LABEL_SCREEN_HEIGHT,
-      borderColor: COLORS.navigableBounds,
-      fontSize: 62,
-    }));
+      borderColor: COLORS.grade,
+      fontSize: 56,
+    };
+    sightlineProjectionLabels.push(gradeLabelSpec);
+    root.add(createDebugLabel(resources, group, gradeLabelSpec));
   }
   root.add(createLineObject(
     resources,
     group,
-    'debug:ground-grade-samples',
+    'debug:sightline-grade-profile',
     gradeSamplePositions,
-    materials.navigableBounds,
+    materials.grade,
   ));
 
   const worldBoundsPositions: number[] = [];
@@ -858,20 +1437,9 @@ export function createWorldDebug(
     materials.collisions,
   ));
 
+  const publicGreenBounds = DISTRICT_DATA.publicGreen.bounds;
   const publicGreenPositions: number[] = [];
-  appendBounds(publicGreenPositions, DISTRICT_DATA.publicGreen.bounds, DEBUG_SURFACE_OFFSET + 0.16);
-  for (const path of DISTRICT_DATA.publicGreen.paths) {
-    appendTerrainPolylineCorridor(
-      publicGreenPositions,
-      path.centerline,
-      path.width * 0.5,
-      DEBUG_SURFACE_OFFSET + 0.16,
-    );
-    const first = path.centerline[0];
-    const last = path.centerline[path.centerline.length - 1];
-    if (first !== undefined) appendCross(publicGreenPositions, first, 1.15, DEBUG_SURFACE_OFFSET + 0.2);
-    if (last !== undefined) appendCross(publicGreenPositions, last, 1.15, DEBUG_SURFACE_OFFSET + 0.2);
-  }
+  appendBounds(publicGreenPositions, publicGreenBounds, DEBUG_SURFACE_OFFSET + 0.16);
   root.add(createLineObject(
     resources,
     group,
@@ -879,129 +1447,339 @@ export function createWorldDebug(
     publicGreenPositions,
     materials.publicGreen,
   ));
-  const publicAccessPositions: number[] = [];
+
+  const publicGreenMaskPositions: number[] = [];
+  const publicGreenMaskBounds = insetBounds(publicGreenBounds, PUBLIC_GREEN_MASK_INSET);
+  if (publicGreenMaskBounds !== null) {
+    appendTerrainBoundsSurface(
+      publicGreenMaskPositions,
+      publicGreenMaskBounds,
+      PUBLIC_GREEN_MASK_OFFSET,
+    );
+  }
+  root.add(createRibbonObject(
+    resources,
+    group,
+    'debug:public-green-schematic-mask',
+    publicGreenMaskPositions,
+    ribbonMaterials.publicGreenMask,
+    980,
+  ));
+
+  const publicAccessRibbonGroup = new Group();
+  publicAccessRibbonGroup.name = 'debug:public-green-access-ribbons';
+  const publicAccessChainGroup = new Group();
+  publicAccessChainGroup.name = 'debug:public-green-access-chains';
+  const publicAccessLeaderGroup = new Group();
+  publicAccessLeaderGroup.name = 'debug:public-green-access-leaders';
   const publicAccessLabelGroup = new Group();
   publicAccessLabelGroup.name = 'debug:public-green-access-labels';
+  const publicAccessStages = [
+    { id: 'path', marker: 'P' },
+    { id: 'apron', marker: 'A' },
+    { id: 'crosswalk', marker: 'C' },
+    { id: 'street', marker: 'S' },
+  ] as const;
   const publicAccessSpecs = [
     {
       id: 'hangu',
-      text: 'PUBLIC ACCESS 01',
-      pathId: 'green-route-path',
-      endpoint: 'first',
-      roadId: 'hangu-pass',
-      labelPosition: { x: -28, z: -5 },
+      text: 'ACCESS 01',
+      theme: 'access01',
+      laneZ: publicGreenBounds.maxZ - PUBLIC_ACCESS_DIAGRAM_LANE_INSET,
     },
     {
       id: 'juyong',
-      text: 'PUBLIC ACCESS 02',
-      pathId: 'green-cross-path',
-      endpoint: 'last',
-      roadId: 'juyongguan',
-      labelPosition: { x: 112, z: -35 },
+      text: 'ACCESS 02',
+      theme: 'access02',
+      laneZ: publicGreenBounds.minZ + PUBLIC_ACCESS_DIAGRAM_LANE_INSET,
     },
   ] as const;
+  const publicAccessDiagramMinX = publicGreenBounds.minX + PUBLIC_ACCESS_DIAGRAM_HORIZONTAL_INSET;
+  const publicAccessDiagramMaxX = publicGreenBounds.maxX - PUBLIC_ACCESS_DIAGRAM_HORIZONTAL_INSET;
+  const publicAccessStageWidth = (
+    publicAccessDiagramMaxX - publicAccessDiagramMinX
+    - PUBLIC_ACCESS_STAGE_GAP * (publicAccessStages.length - 1)
+  ) / publicAccessStages.length;
   for (const access of publicAccessSpecs) {
-    const path = DISTRICT_DATA.publicGreen.paths.find(({ id }) => id === access.pathId);
-    const road = ROAD_SPECS.find(({ id }) => id === access.roadId);
-    if (path === undefined || road === undefined) continue;
-    const endpoint = access.endpoint === 'first'
-      ? path.centerline[0]
-      : path.centerline[path.centerline.length - 1];
-    if (endpoint === undefined) continue;
-    const chain = publicAccessChain(endpoint, road);
-    appendTerrainPolylineCorridor(
-      publicAccessPositions,
-      chain,
-      PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH,
-      PUBLIC_ACCESS_LINE_OFFSET,
-    );
+    const chainColor = access.theme === 'access01' ? COLORS.publicAccess01 : COLORS.publicAccess02;
+    const chainRibbonPositions: number[] = [];
+    const chainLinePositions: number[] = [];
+    const leaderPositions: number[] = [];
+    const labelPosition = {
+      x: publicGreenBounds.minX - PUBLIC_ACCESS_LABEL_LATERAL_OUTSET,
+      z: access.laneZ,
+    };
+    const leaderFrom = {
+      x: publicGreenBounds.minX - PUBLIC_ACCESS_LEADER_START_OUTSET,
+      z: access.laneZ,
+    };
+    const leaderToward = { x: publicAccessDiagramMinX, z: access.laneZ };
+    appendTerrainLine(leaderPositions, leaderFrom, leaderToward, PUBLIC_ACCESS_LINE_OFFSET);
     appendTerrainArrowhead(
-      publicAccessPositions,
-      chain[0],
-      chain[2],
-      0.92,
-      PUBLIC_ACCESS_LINE_OFFSET,
+      leaderPositions,
+      leaderFrom,
+      leaderToward,
+      0.94,
+      PUBLIC_ACCESS_LINE_OFFSET + 0.02,
       PUBLIC_ACCESS_ARROW_LENGTH,
       PUBLIC_ACCESS_ARROW_WIDTH,
     );
-    appendPublicAccessThreshold(publicAccessPositions, chain[1], road);
-    publicAccessLabelGroup.add(createDebugLabel(resources, group, {
+
+    const accessLabelSpec: DebugLabelSpec = {
       name: `debug:public-access-label:${access.id}`,
       text: access.text,
-      position: access.labelPosition,
+      position: labelPosition,
       altitude: PUBLIC_ACCESS_LABEL_ALTITUDE,
       screenWidth: PUBLIC_ACCESS_LABEL_SCREEN_WIDTH,
       screenHeight: PUBLIC_ACCESS_LABEL_SCREEN_HEIGHT,
-      borderColor: COLORS.publicAccess,
+      borderColor: chainColor,
       fontSize: 58,
-    }));
+    };
+    publicGreenProjectionLabels.push(accessLabelSpec);
+    publicAccessLabelGroup.add(createDebugLabel(resources, group, accessLabelSpec));
+
+    for (let stageIndex = 0; stageIndex < publicAccessStages.length; stageIndex += 1) {
+      const stage = publicAccessStages[stageIndex];
+      if (stage === undefined) continue;
+      const stageMinX = publicAccessDiagramMinX
+        + stageIndex * (publicAccessStageWidth + PUBLIC_ACCESS_STAGE_GAP);
+      const stageMaxX = stageMinX + publicAccessStageWidth;
+      const stageFrom = { x: stageMinX, z: access.laneZ };
+      const stageToward = { x: stageMaxX, z: access.laneZ };
+      appendTerrainRibbon(
+        chainRibbonPositions,
+        stageFrom,
+        stageToward,
+        PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH,
+        PUBLIC_ACCESS_RIBBON_OFFSET,
+      );
+      appendTerrainCorridor(
+        chainLinePositions,
+        stageFrom,
+        stageToward,
+        PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH,
+        PUBLIC_ACCESS_LINE_OFFSET,
+      );
+      for (const endpointX of [stageMinX, stageMaxX]) {
+        appendTerrainLine(
+          chainLinePositions,
+          { x: endpointX, z: access.laneZ - PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH },
+          { x: endpointX, z: access.laneZ + PUBLIC_ACCESS_CORRIDOR_HALF_WIDTH },
+          PUBLIC_ACCESS_LINE_OFFSET,
+        );
+      }
+      if (stageIndex < publicAccessStages.length - 1) {
+        const connectorToward = {
+          x: stageMaxX + PUBLIC_ACCESS_STAGE_GAP,
+          z: access.laneZ,
+        };
+        appendTerrainLine(
+          chainLinePositions,
+          stageToward,
+          connectorToward,
+          PUBLIC_ACCESS_LINE_OFFSET,
+        );
+        appendTerrainArrowhead(
+          chainLinePositions,
+          stageToward,
+          connectorToward,
+          0.94,
+          PUBLIC_ACCESS_LINE_OFFSET + 0.02,
+          PUBLIC_ACCESS_ARROW_LENGTH,
+          PUBLIC_ACCESS_ARROW_WIDTH,
+        );
+      }
+      const stageLabelSpec: DebugLabelSpec = {
+        name: `debug:public-access-stage:${access.id}:${stage.id}`,
+        text: stage.marker,
+        position: { x: (stageMinX + stageMaxX) * 0.5, z: access.laneZ },
+        altitude: PUBLIC_ACCESS_LABEL_ALTITUDE,
+        screenWidth: PUBLIC_ACCESS_STAGE_LABEL_SCREEN_WIDTH,
+        screenHeight: PUBLIC_ACCESS_STAGE_LABEL_SCREEN_HEIGHT,
+        borderColor: chainColor,
+        fontSize: 92,
+      };
+      publicGreenProjectionLabels.push(stageLabelSpec);
+      publicAccessLabelGroup.add(createDebugLabel(resources, group, stageLabelSpec));
+    }
+
+    publicAccessRibbonGroup.add(createRibbonObject(
+      resources,
+      group,
+      `debug:public-green-access-ribbon:${access.id}`,
+      chainRibbonPositions,
+      ribbonMaterials.publicAccess[access.theme],
+    ));
+    publicAccessChainGroup.add(createLineObject(
+      resources,
+      group,
+      `debug:public-green-access-chain:${access.id}`,
+      chainLinePositions,
+      materials.publicAccess[access.theme],
+    ));
+    publicAccessLeaderGroup.add(createLineObject(
+      resources,
+      group,
+      `debug:public-green-access-leader:${access.id}`,
+      leaderPositions,
+      materials.publicAccess[access.theme],
+    ));
   }
-  root.add(createLineObject(
-    resources,
-    group,
-    'debug:public-green-access-chains',
-    publicAccessPositions,
-    materials.publicAccess,
-  ));
-  root.add(publicAccessLabelGroup);
-  root.add(createDebugLabel(resources, group, {
+
+  const publicAccessLegendSpec: DebugLabelSpec = {
+    name: 'debug:public-access-sequence-legend',
+    text: 'P PATH  ·  A APRON  ·  C CROSSWALK  ·  S STREET',
+    position: {
+      x: (publicGreenBounds.minX + publicGreenBounds.maxX) * 0.5,
+      z: publicGreenBounds.maxZ + 7,
+    },
+    altitude: PUBLIC_ACCESS_LABEL_ALTITUDE,
+    screenWidth: PUBLIC_ACCESS_SEQUENCE_LABEL_SCREEN_WIDTH,
+    screenHeight: PUBLIC_ACCESS_SEQUENCE_LABEL_SCREEN_HEIGHT,
+    borderColor: COLORS.publicGreen,
+    fontSize: 58,
+  };
+  publicGreenProjectionLabels.push(publicAccessLegendSpec);
+  publicAccessLabelGroup.add(createDebugLabel(resources, group, publicAccessLegendSpec));
+  root.add(
+    publicAccessRibbonGroup,
+    publicAccessChainGroup,
+    publicAccessLeaderGroup,
+    publicAccessLabelGroup,
+  );
+
+  const publicGreenLabelSpec: DebugLabelSpec = {
     name: 'debug:public-green-label',
     text: 'PUBLIC GREEN / OPEN SPACE',
     position: {
-      x: DISTRICT_DATA.publicGreen.bounds.maxX + 42,
-      z: DISTRICT_DATA.publicGreen.bounds.maxZ + 3,
+      x: (publicGreenBounds.minX + publicGreenBounds.maxX) * 0.5,
+      z: publicGreenBounds.minZ - 14,
     },
     altitude: STRUCTURE_LABEL_ALTITUDE + 1.5,
     screenWidth: WIDE_LABEL_SCREEN_WIDTH,
     screenHeight: WIDE_LABEL_SCREEN_HEIGHT,
     borderColor: COLORS.publicGreen,
     fontSize: 64,
-  }));
+  };
+  publicGreenProjectionLabels.push(publicGreenLabelSpec);
+  root.add(createDebugLabel(resources, group, publicGreenLabelSpec));
 
-  const coastPositions: number[] = [];
-  const coastSightline = DISTRICT_DATA.sightlines.find(({ theme }) => theme === 'coast');
-  const selectiveCoastCenterX = coastSightline?.toward.x ?? 0;
-  const selectiveCoastMinX = Math.max(
-    DISTRICT_DATA.worldBounds.minX,
-    selectiveCoastCenterX - COAST_DEBUG_HALF_SPAN,
+  const coastScreenedLinePositions: number[] = [];
+  const coastScreenedRibbonPositions: number[] = [];
+  const coastOpenLinePositions: number[] = [];
+  const coastOpenRibbonPositions: number[] = [];
+  const coastSectorLabelGroup = new Group();
+  coastSectorLabelGroup.name = 'debug:coast-sector-labels';
+
+  const coastScreenedSectors = createCoastScreenedSectors();
+  const coastOpenings = [...DISTRICT_DATA.coast.screen.openings]
+    .sort((first, second) => first.minX - second.minX);
+  const coastBands = [
+    ...coastScreenedSectors.map((sector) => ({ ...sector, kind: 'screened' as const })),
+    ...coastOpenings.map((opening, index) => ({
+      id: `O${index + 1}`,
+      kind: 'open' as const,
+      minX: opening.minX,
+      maxX: opening.maxX,
+    })),
+  ].sort((first, second) => first.minX - second.minX);
+  for (const band of coastBands) {
+    const bandBounds = {
+      minX: band.minX,
+      maxX: band.maxX,
+      minZ: DISTRICT_DATA.coast.screen.z,
+      maxZ: DISTRICT_DATA.coast.seaBounds.maxZ,
+    };
+    const ribbonPositions = band.kind === 'screened'
+      ? coastScreenedRibbonPositions
+      : coastOpenRibbonPositions;
+    appendTerrainBoundsSurface(ribbonPositions, bandBounds, COAST_SECTOR_OFFSET - 0.05);
+    if (band.kind === 'screened') {
+      appendCoastScreenSectorLines(coastScreenedLinePositions, band);
+    } else {
+      appendCoastOpenViewLines(coastOpenLinePositions, band.minX, band.maxX);
+    }
+    const bandLabelSpec: DebugLabelSpec = {
+      name: `debug:coast-band-label:${band.id}`,
+      text: band.id,
+      position: {
+        x: ((band.minX + band.maxX) * 0.5) * COAST_BAND_ID_PERSPECTIVE_X_SCALE,
+        z: DISTRICT_DATA.coast.screen.z - COAST_BAND_ID_INLAND_OFFSET,
+      },
+      altitude: COAST_BAND_ID_ALTITUDE,
+      screenWidth: COAST_BAND_ID_SCREEN_WIDTH,
+      screenHeight: COAST_BAND_ID_SCREEN_HEIGHT,
+      borderColor: band.kind === 'screened' ? COLORS.coastScreened : COLORS.coastOpen,
+      fontSize: 92,
+    };
+    sightlineProjectionLabels.push(bandLabelSpec);
+    coastSectorLabelGroup.add(createDebugLabel(resources, group, bandLabelSpec));
+  }
+
+  const coastLegendZ = DISTRICT_DATA.coast.seaBounds.maxZ + COAST_BAND_LEGEND_SOUTH_OUTSET;
+  const coastLegendSpecs: readonly DebugLabelSpec[] = [
+    {
+      name: 'debug:coast-screened-legend',
+      text: `S = SCREENED (${coastScreenedSectors.length})`,
+      position: {
+        x: DISTRICT_DATA.coast.seaBounds.minX + COAST_BAND_SCREENED_LEGEND_X_INSET,
+        z: coastLegendZ,
+      },
+      altitude: COAST_BAND_LEGEND_ALTITUDE,
+      screenWidth: COAST_BAND_SCREENED_LEGEND_SCREEN_WIDTH,
+      screenHeight: COAST_BAND_LEGEND_SCREEN_HEIGHT,
+      borderColor: COLORS.coastScreened,
+      fontSize: 60,
+    },
+    {
+      name: 'debug:coast-open-legend',
+      text: `O = OPEN ROAD VIEW (${coastOpenings.length})`,
+      position: {
+        x: DISTRICT_DATA.coast.seaBounds.maxX - COAST_BAND_OPEN_LEGEND_X_INSET,
+        z: coastLegendZ,
+      },
+      altitude: COAST_BAND_LEGEND_ALTITUDE,
+      screenWidth: COAST_BAND_OPEN_LEGEND_SCREEN_WIDTH,
+      screenHeight: COAST_BAND_LEGEND_SCREEN_HEIGHT,
+      borderColor: COLORS.coastOpen,
+      fontSize: 54,
+    },
+  ];
+  for (const coastLegendSpec of coastLegendSpecs) {
+    sightlineProjectionLabels.push(coastLegendSpec);
+    coastSectorLabelGroup.add(createDebugLabel(resources, group, coastLegendSpec));
+  }
+  root.add(
+    createRibbonObject(
+      resources,
+      group,
+      'debug:coast-screened-ribbons',
+      coastScreenedRibbonPositions,
+      ribbonMaterials.coastScreened,
+    ),
+    createLineObject(
+      resources,
+      group,
+      'debug:coast-screened-sectors',
+      coastScreenedLinePositions,
+      materials.coastScreened,
+    ),
+    createRibbonObject(
+      resources,
+      group,
+      'debug:coast-open-view-ribbons',
+      coastOpenRibbonPositions,
+      ribbonMaterials.coastOpen,
+    ),
+    createLineObject(
+      resources,
+      group,
+      'debug:coast-open-view-sectors',
+      coastOpenLinePositions,
+      materials.coastOpen,
+    ),
+    coastSectorLabelGroup,
   );
-  const selectiveCoastMaxX = Math.min(
-    DISTRICT_DATA.worldBounds.maxX,
-    selectiveCoastCenterX + COAST_DEBUG_HALF_SPAN,
-  );
-  appendTerrainLine(
-    coastPositions,
-    { x: selectiveCoastMinX, z: DISTRICT_DATA.coast.edgeZ },
-    { x: selectiveCoastMaxX, z: DISTRICT_DATA.coast.edgeZ },
-    DEBUG_SURFACE_OFFSET + 0.2,
-  );
-  const promenadeZ = DISTRICT_DATA.coast.promenade.centerline[0]?.z
-    ?? DISTRICT_DATA.coast.edgeZ - 4;
-  appendTerrainLine(
-    coastPositions,
-    { x: selectiveCoastMinX, z: promenadeZ },
-    { x: selectiveCoastMaxX, z: promenadeZ },
-    DEBUG_SURFACE_OFFSET + 0.2,
-  );
-  appendCross(
-    coastPositions,
-    { x: selectiveCoastMinX, z: DISTRICT_DATA.coast.edgeZ },
-    1.3,
-    DEBUG_SURFACE_OFFSET + 0.24,
-  );
-  appendCross(
-    coastPositions,
-    { x: selectiveCoastMaxX, z: DISTRICT_DATA.coast.edgeZ },
-    1.3,
-    DEBUG_SURFACE_OFFSET + 0.24,
-  );
-  root.add(createLineObject(
-    resources,
-    group,
-    'debug:coastal-edge-and-promenade',
-    coastPositions,
-    materials.coast,
-  ));
 
   const routePositions: number[] = [];
   for (let index = 1; index < ROUTE_ANCHORS.length; index += 1) {
@@ -1060,18 +1838,48 @@ export function createWorldDebug(
   const sightlineLabelGroup = new Group();
   sightlineLabelGroup.name = 'debug:sightline-labels';
   for (const sightline of DISTRICT_DATA.sightlines) {
-    const positions: number[] = [];
-    appendSightlineArrow(positions, sightline);
+    const ribbonPositions: number[] = [];
+    appendTerrainRibbon(
+      ribbonPositions,
+      sightline.from,
+      sightline.toward,
+      SIGHTLINE_CORRIDOR_HALF_WIDTH,
+      SIGHTLINE_RIBBON_OFFSET,
+    );
+    root.add(createRibbonObject(
+      resources,
+      group,
+      `debug:sightline-ribbon:${sightline.id}`,
+      ribbonPositions,
+      ribbonMaterials.sightlines[sightline.theme],
+    ));
+
+    const corridorPositions: number[] = [];
+    appendSightlineGeometry(corridorPositions, sightline);
     root.add(createLineObject(
       resources,
       group,
       `debug:sightline:${sightline.id}`,
-      positions,
+      corridorPositions,
       materials.sightlines[sightline.theme],
     ));
-    sightlineLabelGroup.add(createSightlineLabel(resources, group, sightline));
+
+    const leaderPositions: number[] = [];
+    appendSightlineLabelLeader(leaderPositions, sightline);
+    root.add(createLineObject(
+      resources,
+      group,
+      `debug:sightline-label-leader:${sightline.id}`,
+      leaderPositions,
+      materials.sightlines[sightline.theme],
+    ));
+    const sightlineLabelSpec = createSightlineLabelSpec(sightline);
+    sightlineProjectionLabels.push(sightlineLabelSpec);
+    sightlineLabelGroup.add(createDebugLabel(resources, group, sightlineLabelSpec));
   }
   root.add(sightlineLabelGroup);
+  assertStaticCaptureLabelLayout('public-green', publicGreenProjectionLabels);
+  assertStaticCaptureLabelLayout('sightlines', sightlineProjectionLabels);
 
   const spawnPositions: number[] = [];
   appendCross(
@@ -1150,18 +1958,50 @@ export function createWorldDebug(
     materials.marker,
   ));
 
+  const roadLabelLeaderPositions: number[] = [];
   const labelGroup = new Group();
   labelGroup.name = 'debug:road-labels';
-  for (const road of ROAD_SPECS) labelGroup.add(createRoadLabel(resources, group, road));
-  root.add(labelGroup);
+  for (const road of ROAD_SPECS) {
+    const labelPosition = roadLabelPosition(road);
+    const leaderAnchor = roadLabelLeaderAnchor(road, labelPosition);
+    if (leaderAnchor !== null) {
+      appendElevatedLabelLeader(
+        roadLabelLeaderPositions,
+        leaderAnchor,
+        labelPosition,
+        DEBUG_SURFACE_OFFSET + 0.12,
+        ROAD_LABEL_ALTITUDE,
+      );
+    }
+    labelGroup.add(createRoadLabel(resources, group, road, labelPosition));
+  }
+  root.add(
+    createLineObject(
+      resources,
+      group,
+      'debug:road-label-leaders',
+      roadLabelLeaderPositions,
+      materials.roadGrid,
+    ),
+    labelGroup,
+  );
 
   const activeMarker = createActiveAnchorMarker(resources, group, materials);
   root.add(activeMarker);
 
   const viewLayers: DebugViewLayers = {
-    overview: createDebugViewLayer(root, 'debug:view-layer:overview', [
+    roadContext: createDebugViewLayer(root, 'debug:view-layer:road-context', [
+      'debug:terrain-conforming-road-grid',
+    ]),
+    grid: createDebugViewLayer(root, 'debug:view-layer:grid', [
       'debug:world-bounds',
       'debug:navigable-bounds',
+      'debug:grid-grade-orientation',
+      'debug:grid-orientation-label',
+      'debug:road-label-leaders',
+      'debug:road-labels',
+    ]),
+    overview: createDebugViewLayer(root, 'debug:view-layer:overview', [
       'debug:parcels-and-setbacks',
       'debug:future-building-collisions',
       'debug:ordered-route',
@@ -1170,21 +2010,30 @@ export function createWorldDebug(
       'debug:spawn-marker',
       'debug:reset-marker',
       'debug:camera-height-marker',
-      'debug:road-labels',
       'debug:active-anchor',
     ]),
     publicGreen: createDebugViewLayer(root, 'debug:view-layer:public-green', [
+      'debug:public-green',
+      'debug:public-green-schematic-mask',
       'debug:public-green-access-chains',
+      'debug:public-green-access-ribbons',
+      'debug:public-green-access-leaders',
+      'debug:public-green-access-labels',
       'debug:public-green-label',
     ]),
-    publicGreenLabels: createDebugViewLayer(root, 'debug:view-layer:public-green-labels', [
-      'debug:public-green-access-labels',
-    ]),
     sightlines: createDebugViewLayer(root, 'debug:view-layer:sightlines', [
-      'debug:ground-grade-samples',
+      'debug:sightline-grade-profile',
       'debug:grade-label',
-      'debug:coastal-edge-and-promenade',
-      ...DISTRICT_DATA.sightlines.map(({ id }) => `debug:sightline:${id}`),
+      'debug:coast-screened-ribbons',
+      'debug:coast-screened-sectors',
+      'debug:coast-open-view-ribbons',
+      'debug:coast-open-view-sectors',
+      'debug:coast-sector-labels',
+      ...DISTRICT_DATA.sightlines.flatMap(({ id }) => [
+        `debug:sightline-ribbon:${id}`,
+        `debug:sightline:${id}`,
+        `debug:sightline-label-leader:${id}`,
+      ]),
       'debug:sightline-labels',
     ]),
   };

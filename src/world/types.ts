@@ -19,16 +19,34 @@ export interface LineSegment {
   readonly to: Vec2;
 }
 
+export interface RoadCenterline extends LineSegment {
+  readonly via: readonly Vec2[];
+}
+
 export interface AuthoredInference {
   readonly status: 'authored-inference';
   readonly basis: string;
+}
+
+export interface CoastOpeningSector {
+  readonly id: string;
+  readonly minX: number;
+  readonly maxX: number;
+  readonly alignedRoadId: string;
+}
+
+export interface CoastScreenSpec {
+  readonly z: number;
+  readonly height: number;
+  readonly openings: readonly CoastOpeningSector[];
+  readonly inference: AuthoredInference;
 }
 
 export interface RoadSpec {
   readonly id: string;
   readonly name: string;
   readonly orientation: RoadOrientation;
-  readonly centerline: LineSegment;
+  readonly centerline: RoadCenterline;
   readonly width: number;
   readonly sidewalkWidth: number;
   readonly inference: AuthoredInference;
@@ -67,6 +85,7 @@ export interface CoastSpec {
   readonly edgeZ: number;
   readonly promenade: PathSpec;
   readonly seaBounds: Bounds2;
+  readonly screen: CoastScreenSpec;
   readonly collidable: false;
 }
 

@@ -33,6 +33,58 @@ function distance(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
 
+function roadPoints(road: (typeof ROAD_SPECS)[number]): readonly Vec2[] {
+  return [road.centerline.from, ...road.centerline.via, road.centerline.to];
+}
+
+function pointToSegmentDistance(point: Vec2, from: Vec2, to: Vec2): number {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const lengthSquared = dx * dx + dz * dz;
+  if (lengthSquared === 0) return distance(point, from);
+  const amount = Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.z - from.z) * dz) / lengthSquared));
+  return distance(point, { x: from.x + dx * amount, z: from.z + dz * amount });
+}
+
+function pointToRoadDistance(point: Vec2, road: (typeof ROAD_SPECS)[number]): number {
+  const points = roadPoints(road);
+  return Math.min(...points.slice(1).map((to, index) => pointToSegmentDistance(point, points[index] as Vec2, to)));
+}
+
+function segmentIntersectsBounds(from: Vec2, to: Vec2, bounds: Bounds2): boolean {
+  let near = 0;
+  let far = 1;
+  const clip = (origin: number, delta: number, minimum: number, maximum: number): boolean => {
+    if (delta === 0) return origin >= minimum && origin <= maximum;
+    const first = (minimum - origin) / delta;
+    const second = (maximum - origin) / delta;
+    near = Math.max(near, Math.min(first, second));
+    far = Math.min(far, Math.max(first, second));
+    return near <= far;
+  };
+  return clip(from.x, to.x - from.x, bounds.minX, bounds.maxX)
+    && clip(from.z, to.z - from.z, bounds.minZ, bounds.maxZ);
+}
+
+function segmentsIntersect(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
+  const cross = (first: Vec2, second: Vec2, third: Vec2) => (
+    (second.x - first.x) * (third.z - first.z) - (second.z - first.z) * (third.x - first.x)
+  );
+  const abC = cross(a, b, c);
+  const abD = cross(a, b, d);
+  const cdA = cross(c, d, a);
+  const cdB = cross(c, d, b);
+  return abC * abD <= 0 && cdA * cdB <= 0;
+}
+
+function roadsIntersect(left: (typeof ROAD_SPECS)[number], right: (typeof ROAD_SPECS)[number]): boolean {
+  const leftPoints = roadPoints(left);
+  const rightPoints = roadPoints(right);
+  return leftPoints.slice(1).some((leftTo, leftIndex) => rightPoints.slice(1).some((rightTo, rightIndex) => (
+    segmentsIntersect(leftPoints[leftIndex] as Vec2, leftTo, rightPoints[rightIndex] as Vec2, rightTo)
+  )));
+}
+
 function expectDeeplyFrozen(value: unknown): void {
   if (typeof value !== 'object' || value === null) return;
   expect(Object.isFrozen(value)).toBe(true);
@@ -59,29 +111,50 @@ describe('authored Badaguan district data', () => {
     expect(northSouth.map(({ centerline }) => centerline.from.x)).toEqual([-120, 0, 120]);
   });
 
-  it('keeps every road straight, axis-correct, consistently sized, and spanning navigation', () => {
+  it('keeps road topology, spans, sizing, and restrained terrain-led turns', () => {
+    const curvedRoads = ROAD_SPECS.filter(({ centerline }) => centerline.via.length > 0);
+    expect(curvedRoads.length).toBeGreaterThan(0);
+    expect(curvedRoads.length).toBeLessThan(ROAD_SPECS.length);
+    expect(curvedRoads.map(({ id }) => id)).toEqual([
+      'ningwuguan',
+      'zhengyangguan',
+      'juyongguan',
+      'wushengguan',
+      'shanhaiguan',
+    ]);
+
     for (const road of ROAD_SPECS) {
-      const { from, to } = road.centerline;
+      const { from, to, via } = road.centerline;
+      const points = roadPoints(road);
       expect(road.width).toBe(12);
       expect(road.sidewalkWidth).toBe(3);
       expect(road.inference.status).toBe('authored-inference');
+      expect(new Set(points.map(({ x, z }) => `${x}:${z}`)).size).toBe(points.length);
       if (road.orientation === 'east-west') {
-        expect(from.z).toBe(to.z);
         expect([from.x, to.x]).toEqual([
           DISTRICT_DATA.navigableBounds.minX,
           DISTRICT_DATA.navigableBounds.maxX,
         ]);
+        expect(points.map(({ x }) => x)).toEqual([...points.map(({ x }) => x)].sort((left, right) => left - right));
+        expect(via.every(({ z }) => Math.abs(z - from.z) <= 4)).toBe(true);
       } else {
-        expect(from.x).toBe(to.x);
         expect([from.z, to.z]).toEqual([
           DISTRICT_DATA.navigableBounds.maxZ,
           DISTRICT_DATA.navigableBounds.minZ,
         ]);
+        expect(points.map(({ z }) => z)).toEqual([...points.map(({ z }) => z)].sort((left, right) => right - left));
+        expect(via.every(({ x }) => Math.abs(x - from.x) <= 4)).toBe(true);
       }
+    }
+
+    const eastWest = ROAD_SPECS.filter(({ orientation }) => orientation === 'east-west');
+    const northSouth = ROAD_SPECS.filter(({ orientation }) => orientation === 'north-south');
+    for (const transverse of eastWest) {
+      for (const longitudinal of northSouth) expect(roadsIntersect(transverse, longitudinal)).toBe(true);
     }
   });
 
-  it('defines the contracted metre-scale world, navigation inset, and noncollidable coast', () => {
+  it('defines the contracted metre-scale world and a selectively screened noncollidable coast', () => {
     const { worldBounds, navigableBounds, coast } = DISTRICT_DATA;
     expect(worldBounds).toEqual({ minX: -210, maxX: 210, minZ: -300, maxZ: 60 });
     expect(worldBounds.maxX - worldBounds.minX).toBe(420);
@@ -91,24 +164,87 @@ describe('authored Badaguan district data', () => {
     expect(coast.seaBounds.minZ).toBe(coast.edgeZ);
     expect(coast.seaBounds.maxZ).toBe(worldBounds.maxZ);
     expect(coast.collidable).toBe(false);
+    expect(coast.screen.height).toBeGreaterThan(1.68);
+    expect(coast.screen.z).toBeLessThanOrEqual(coast.edgeZ);
+    expect(coast.screen.openings).toHaveLength(3);
+    expect(coast.screen.inference.status).toBe('authored-inference');
+    const openings = [...coast.screen.openings].sort((left, right) => left.minX - right.minX);
+    for (const [index, opening] of openings.entries()) {
+      expect(opening.minX).toBeLessThan(opening.maxX);
+      expect(opening.minX).toBeGreaterThanOrEqual(navigableBounds.minX);
+      expect(opening.maxX).toBeLessThanOrEqual(navigableBounds.maxX);
+      if (index > 0) expect(openings[index - 1]?.maxX).toBeLessThan(opening.minX);
+      const road = ROAD_SPECS.find(({ id }) => id === opening.alignedRoadId);
+      expect(road?.orientation).toBe('north-south');
+      expect(road && opening.minX <= road.centerline.from.x && opening.maxX >= road.centerline.from.x).toBe(true);
+    }
     expect(DISTRICT_DATA.provenance.coordinateSystem).toContain('+X east, -Z north, +Y up');
   });
 
-  it('records coherent parcel setbacks, walls, gates, paths, and future collisions', () => {
-    const roadIds = new Set(ROAD_SPECS.map(({ id }) => id));
+  it('keeps parcels, setbacks, perimeter walls, and gates outside every road-sidewalk corridor', () => {
+    const corridorPadding = (road: (typeof ROAD_SPECS)[number]) => road.width * 0.5 + road.sidewalkWidth;
     expect(DISTRICT_DATA.parcels.length).toBeGreaterThan(0);
     for (const parcel of DISTRICT_DATA.parcels) {
       expect(parcel.setback).toBeGreaterThan(0);
-      expect(parcel.wallSegments.length).toBeGreaterThanOrEqual(4);
+      expect(parcel.setback * 2).toBeLessThan(Math.min(
+        parcel.bounds.maxX - parcel.bounds.minX,
+        parcel.bounds.maxZ - parcel.bounds.minZ,
+      ));
+      expect(parcel.wallSegments).toHaveLength(4);
       expect(parcel.gates.length).toBeGreaterThan(0);
+
+      const wallLength = parcel.wallSegments.reduce((total, wall) => total + distance(wall.from, wall.to), 0);
+      expect(wallLength).toBe(2 * (
+        parcel.bounds.maxX - parcel.bounds.minX + parcel.bounds.maxZ - parcel.bounds.minZ
+      ));
       for (const wall of parcel.wallSegments) {
         expect(contains(parcel.bounds, wall.from)).toBe(true);
         expect(contains(parcel.bounds, wall.to)).toBe(true);
+        expect(wall.from.x === wall.to.x || wall.from.z === wall.to.z).toBe(true);
+        expect(
+          wall.from.x === parcel.bounds.minX || wall.from.x === parcel.bounds.maxX
+          || wall.from.z === parcel.bounds.minZ || wall.from.z === parcel.bounds.maxZ,
+        ).toBe(true);
       }
+      const endpointCounts = new Map<string, number>();
+      for (const wall of parcel.wallSegments) {
+        for (const endpoint of [wall.from, wall.to]) {
+          const key = `${endpoint.x}:${endpoint.z}`;
+          endpointCounts.set(key, (endpointCounts.get(key) ?? 0) + 1);
+        }
+      }
+      expect([...endpointCounts.values()]).toEqual([2, 2, 2, 2]);
+
+      for (const road of ROAD_SPECS) {
+        const padding = corridorPadding(road);
+        const expandedParcel = {
+          minX: parcel.bounds.minX - padding,
+          maxX: parcel.bounds.maxX + padding,
+          minZ: parcel.bounds.minZ - padding,
+          maxZ: parcel.bounds.maxZ + padding,
+        };
+        const points = roadPoints(road);
+        expect(points.slice(1).some((to, index) => segmentIntersectsBounds(points[index] as Vec2, to, expandedParcel))).toBe(false);
+      }
+
       for (const gate of parcel.gates) {
         expect(contains(parcel.bounds, gate.position)).toBe(true);
         expect(gate.width).toBeGreaterThan(0);
-        expect(roadIds.has(gate.facesRoadId)).toBe(true);
+        expect(parcel.wallSegments.some(({ from, to }) => pointToSegmentDistance(gate.position, from, to) === 0)).toBe(true);
+        const declaredRoad = ROAD_SPECS.find(({ id }) => id === gate.facesRoadId);
+        expect(declaredRoad).toBeDefined();
+        if (!declaredRoad) continue;
+        const declaredDistance = pointToRoadDistance(gate.position, declaredRoad);
+        expect(ROAD_SPECS.every((road) => declaredDistance <= pointToRoadDistance(gate.position, road) + 1e-8)).toBe(true);
+        const boundaryMidpoints = [
+          { x: (parcel.bounds.minX + parcel.bounds.maxX) * 0.5, z: parcel.bounds.minZ },
+          { x: (parcel.bounds.minX + parcel.bounds.maxX) * 0.5, z: parcel.bounds.maxZ },
+          { x: parcel.bounds.minX, z: (parcel.bounds.minZ + parcel.bounds.maxZ) * 0.5 },
+          { x: parcel.bounds.maxX, z: (parcel.bounds.minZ + parcel.bounds.maxZ) * 0.5 },
+        ];
+        expect(pointToRoadDistance(gate.position, declaredRoad)).toBeLessThanOrEqual(
+          Math.min(...boundaryMidpoints.map((point) => pointToRoadDistance(point, declaredRoad))) + gate.width,
+        );
       }
     }
 

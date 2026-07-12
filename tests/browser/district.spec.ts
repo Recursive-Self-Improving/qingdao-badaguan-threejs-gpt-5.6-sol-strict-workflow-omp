@@ -132,13 +132,81 @@ async function evidence(page: Page, testInfo: TestInfo, name: string): Promise<v
 test('publishes the exact 7 by 3 road grid and starts with debug hidden', async ({ page }, testInfo) => {
   const value = await boot(page);
 
-  expect(value.world.roads).toEqual({
+  expect(value.world.roads).toMatchObject({
     count: 10,
     transverseCount: 7,
     longitudinalCount: 3,
     names: [...ROAD_NAMES],
   });
   expect(new Set(value.world.roads.names).size).toBe(10);
+  expect(value.world.roads.centerlines.filter(({ via }) => via.length > 0).map(({ id, via }) => ({ id, via }))).toEqual([
+    { id: 'ningwuguan', via: [{ x: -70, z: -212 }, { x: 70, z: -218 }] },
+    { id: 'zhengyangguan', via: [{ x: -60, z: -129 }, { x: 70, z: -122 }] },
+    { id: 'juyongguan', via: [{ x: -80, z: -32 }, { x: 80, z: -38 }] },
+    { id: 'wushengguan', via: [{ x: -117, z: -70 }, { x: -123, z: -180 }] },
+    { id: 'shanhaiguan', via: [{ x: 124, z: -80 }, { x: 117, z: -200 }] },
+  ]);
+  for (const road of value.world.roads.centerlines) {
+    expect(road.from).toEqual(road.orientation === 'east-west'
+      ? { x: -200, z: road.from.z }
+      : { x: road.from.x, z: 38 });
+    expect(road.to).toEqual(road.orientation === 'east-west'
+      ? { x: 200, z: road.to.z }
+      : { x: road.to.x, z: -290 });
+    for (const point of road.via) {
+      const turnOffset = road.orientation === 'east-west'
+        ? Math.abs(point.z - road.from.z)
+        : Math.abs(point.x - road.from.x);
+      expect(turnOffset).toBeGreaterThan(0);
+      expect(turnOffset).toBeLessThanOrEqual(4);
+    }
+  }
+  expect(value.world.parcels).toMatchObject([
+    {
+      id: 'west-garden-parcel',
+      bounds: { minX: -190, maxX: -135, minZ: -201, maxZ: -184 },
+      setback: 5,
+      gates: [{ id: 'west-garden-gate', position: { x: -162, z: -201 }, width: 4, facesRoadId: 'ningwuguan' }],
+    },
+    {
+      id: 'central-garden-parcel',
+      bounds: { minX: 18, maxX: 92, minZ: -111, maxZ: -94 },
+      setback: 5,
+      gates: [{ id: 'central-garden-gate', position: { x: 55, z: -111 }, width: 5, facesRoadId: 'zhengyangguan' }],
+    },
+    {
+      id: 'east-garden-parcel',
+      bounds: { minX: 135, maxX: 190, minZ: -201, maxZ: -184 },
+      setback: 5,
+      gates: [{ id: 'east-garden-gate', position: { x: 162, z: -201 }, width: 4, facesRoadId: 'ningwuguan' }],
+    },
+  ]);
+  for (const parcel of value.world.parcels) {
+    expect(parcel.wallSegments).toHaveLength(4);
+    for (const segment of parcel.wallSegments) {
+      for (const point of [segment.from, segment.to]) {
+        const onBoundary = point.x === parcel.bounds.minX || point.x === parcel.bounds.maxX ||
+          point.z === parcel.bounds.minZ || point.z === parcel.bounds.maxZ;
+        expect(onBoundary).toBe(true);
+      }
+    }
+  }
+  expect(value.world.coast).toEqual({
+    edgeZ: 38,
+    seaBounds: { minX: -210, maxX: 210, minZ: 38, maxZ: 60 },
+    collidable: false,
+    screen: {
+      z: 36,
+      height: 2.6,
+      openings: [
+        { id: 'wushengguan-coast-opening', minX: -127, maxX: -113, alignedRoadId: 'wushengguan' },
+        { id: 'hangu-pass-coast-opening', minX: -7, maxX: 7, alignedRoadId: 'hangu-pass' },
+        { id: 'shanhaiguan-coast-opening', minX: 113, maxX: 127, alignedRoadId: 'shanhaiguan' },
+      ],
+    },
+  });
+  expect(value.world.coast.screen.height).toBeGreaterThan(EYE_HEIGHT);
+  expect(value.world.coast.screen.openings).toHaveLength(3);
   expect(value.world.bounds).toEqual({
     world: { minX: -210, maxX: 210, minZ: -300, maxZ: 60 },
     navigable: { minX: -200, maxX: 200, minZ: -290, maxZ: 38 },

@@ -21,13 +21,12 @@ import type {
   GateSpec,
   LineSegment,
   ParcelSpec,
-  PathSpec,
   RoadSpec,
   Vec2,
 } from '../types';
 
 const SURFACE_SAMPLE_SPACING = 8;
-const PATH_JOINT_SEGMENTS = 12;
+const POLYLINE_JOINT_SEGMENTS = 12;
 const WALL_SECTION_LENGTH = 8;
 const COAST_SECTION_LENGTH = 18;
 const CROSSWALK_STRIPE_LENGTH = 0.8;
@@ -51,9 +50,7 @@ const WALL_THICKNESS = 0.48;
 const GATE_POST_HEIGHT = 0.9;
 const GATE_POST_SIZE = 0.48;
 const GATE_ALIGNMENT_TOLERANCE = 0.75;
-const COAST_EDGE_HEIGHT = 0.55;
-const COAST_EDGE_THICKNESS = 0.7;
-const COAST_ACCESS_MARGIN = 2;
+const COAST_SCREEN_THICKNESS = 0.7;
 const SEA_LEVEL_OFFSET = -0.08;
 
 const COLORS = {
@@ -68,7 +65,7 @@ const COLORS = {
   crosswalk: 0xeee2c5,
   wall: 0x887c69,
   gate: 0x665c50,
-  coastEdge: 0x7e7467,
+  coastScreen: 0x7e7467,
   sea: 0x557f8e,
 } as const;
 
@@ -90,8 +87,17 @@ interface Interval {
 interface PublicGreenEntrance {
   readonly endpoint: Vec2;
   readonly road: RoadSpec;
+  readonly roadCenter: Vec2;
   readonly roadEdge: Vec2;
+  readonly roadNormal: Vec2;
   readonly width: number;
+}
+
+interface RoadApproach {
+  readonly roadCenter: Vec2;
+  readonly roadEdge: Vec2;
+  readonly roadNormal: Vec2;
+  readonly sidewalkDistance: number;
 }
 
 function terrainPoint(point: Vec2, yOffset: number): readonly [number, number, number] {
@@ -190,9 +196,9 @@ function appendTerrainDisk(
   yOffset: number,
 ): void {
   const middle = terrainPoint(center, yOffset);
-  for (let segment = 0; segment < PATH_JOINT_SEGMENTS; segment += 1) {
-    const firstAngle = (segment / PATH_JOINT_SEGMENTS) * Math.PI * 2;
-    const secondAngle = ((segment + 1) / PATH_JOINT_SEGMENTS) * Math.PI * 2;
+  for (let segment = 0; segment < POLYLINE_JOINT_SEGMENTS; segment += 1) {
+    const firstAngle = (segment / POLYLINE_JOINT_SEGMENTS) * Math.PI * 2;
+    const secondAngle = ((segment + 1) / POLYLINE_JOINT_SEGMENTS) * Math.PI * 2;
     const first = terrainPoint({
       x: center.x + Math.cos(firstAngle) * radius,
       z: center.z + Math.sin(firstAngle) * radius,
@@ -205,16 +211,112 @@ function appendTerrainDisk(
   }
 }
 
-function appendPath(positions: number[], path: PathSpec, yOffset: number): void {
-  for (let index = 1; index < path.centerline.length; index += 1) {
-    const from = path.centerline[index - 1];
-    const to = path.centerline[index];
+function appendPolylineStrip(
+  positions: number[],
+  centerline: readonly Vec2[],
+  width: number,
+  yOffset: number,
+): void {
+  for (let index = 1; index < centerline.length; index += 1) {
+    const from = centerline[index - 1];
+    const to = centerline[index];
     if (from === undefined || to === undefined) continue;
-    appendStripSegment(positions, from, to, path.width, yOffset);
+    appendStripSegment(positions, from, to, width, yOffset);
   }
-  for (const point of path.centerline) {
-    appendTerrainDisk(positions, point, path.width * 0.5, yOffset);
+  for (const point of centerline) appendTerrainDisk(positions, point, width * 0.5, yOffset);
+}
+
+function offsetPolylines(
+  centerline: readonly Vec2[],
+  offset: number,
+): readonly [readonly Vec2[], readonly Vec2[]] {
+  const segmentNormals: Array<Vec2 | null> = [];
+  for (let index = 1; index < centerline.length; index += 1) {
+    const from = centerline[index - 1];
+    const to = centerline[index];
+    if (from === undefined || to === undefined) {
+      segmentNormals.push(null);
+      continue;
+    }
+    const deltaX = to.x - from.x;
+    const deltaZ = to.z - from.z;
+    const length = Math.hypot(deltaX, deltaZ);
+    segmentNormals.push(length === 0 ? null : { x: -deltaZ / length, z: deltaX / length });
   }
+
+  const left: Vec2[] = [];
+  const right: Vec2[] = [];
+  for (let index = 0; index < centerline.length; index += 1) {
+    const point = centerline[index];
+    if (point === undefined) continue;
+    const previous = segmentNormals[index - 1] ?? null;
+    const next = segmentNormals[index] ?? null;
+    let normalX = previous?.x ?? next?.x ?? 0;
+    let normalZ = previous?.z ?? next?.z ?? 0;
+    if (previous !== null && next !== null) {
+      normalX = previous.x + next.x;
+      normalZ = previous.z + next.z;
+      const combinedLength = Math.hypot(normalX, normalZ);
+      if (combinedLength === 0) {
+        normalX = next.x;
+        normalZ = next.z;
+      } else {
+        normalX /= combinedLength;
+        normalZ /= combinedLength;
+      }
+    }
+    const offsetX = normalX * offset;
+    const offsetZ = normalZ * offset;
+    left.push({ x: point.x + offsetX, z: point.z + offsetZ });
+    right.push({ x: point.x - offsetX, z: point.z - offsetZ });
+  }
+  return [left, right];
+}
+
+function closestRoadApproach(endpoint: Vec2, road: RoadSpec): RoadApproach | null {
+  const centerline = [road.centerline.from, ...road.centerline.via, road.centerline.to];
+  let closest: RoadApproach | null = null;
+
+  for (let index = 1; index < centerline.length; index += 1) {
+    const from = centerline[index - 1];
+    const to = centerline[index];
+    if (from === undefined || to === undefined) continue;
+    const deltaX = to.x - from.x;
+    const deltaZ = to.z - from.z;
+    const lengthSquared = deltaX * deltaX + deltaZ * deltaZ;
+    if (lengthSquared === 0) continue;
+    const length = Math.sqrt(lengthSquared);
+    const projection = Math.min(1, Math.max(0,
+      ((endpoint.x - from.x) * deltaX + (endpoint.z - from.z) * deltaZ) / lengthSquared,
+    ));
+    const roadCenter = {
+      x: from.x + deltaX * projection,
+      z: from.z + deltaZ * projection,
+    };
+    const leftNormal = { x: -deltaZ / length, z: deltaX / length };
+    const side = (endpoint.x - roadCenter.x) * leftNormal.x
+      + (endpoint.z - roadCenter.z) * leftNormal.z >= 0 ? 1 : -1;
+    const roadNormal = { x: leftNormal.x * side, z: leftNormal.z * side };
+    const roadEdgeOffset = road.width * 0.5;
+    const sidewalkEdgeOffset = roadEdgeOffset + road.sidewalkWidth;
+    const roadEdge = {
+      x: roadCenter.x + roadNormal.x * roadEdgeOffset,
+      z: roadCenter.z + roadNormal.z * roadEdgeOffset,
+    };
+    const sidewalkEdge = {
+      x: roadCenter.x + roadNormal.x * sidewalkEdgeOffset,
+      z: roadCenter.z + roadNormal.z * sidewalkEdgeOffset,
+    };
+    const sidewalkDistance = Math.hypot(
+      endpoint.x - sidewalkEdge.x,
+      endpoint.z - sidewalkEdge.z,
+    );
+    if (closest === null || sidewalkDistance < closest.sidewalkDistance) {
+      closest = { roadCenter, roadEdge, roadNormal, sidewalkDistance };
+    }
+  }
+
+  return closest;
 }
 
 function createPublicGreenEntrances(): readonly PublicGreenEntrance[] {
@@ -233,49 +335,24 @@ function createPublicGreenEntrances(): readonly PublicGreenEntrance[] {
       seenEndpoints.add(endpointKey);
 
       let closestRoad: RoadSpec | null = null;
-      let closestRoadEdge: Vec2 | null = null;
-      let closestDistance = Number.POSITIVE_INFINITY;
-
+      let closestApproach: RoadApproach | null = null;
       for (const road of ROAD_SPECS) {
-        const halfRoadWidth = road.width * 0.5;
-        const sidewalkEdgeOffset = halfRoadWidth + road.sidewalkWidth;
-        let roadEdge: Vec2;
-        let sidewalkEdge: Vec2;
-
-        if (road.orientation === 'east-west') {
-          const minX = Math.min(road.centerline.from.x, road.centerline.to.x);
-          const maxX = Math.max(road.centerline.from.x, road.centerline.to.x);
-          const x = Math.min(maxX, Math.max(minX, endpoint.x));
-          const centerZ = (road.centerline.from.z + road.centerline.to.z) * 0.5;
-          const side = endpoint.z >= centerZ ? 1 : -1;
-          roadEdge = { x, z: centerZ + halfRoadWidth * side };
-          sidewalkEdge = { x, z: centerZ + sidewalkEdgeOffset * side };
-        } else {
-          const minZ = Math.min(road.centerline.from.z, road.centerline.to.z);
-          const maxZ = Math.max(road.centerline.from.z, road.centerline.to.z);
-          const z = Math.min(maxZ, Math.max(minZ, endpoint.z));
-          const centerX = (road.centerline.from.x + road.centerline.to.x) * 0.5;
-          const side = endpoint.x >= centerX ? 1 : -1;
-          roadEdge = { x: centerX + halfRoadWidth * side, z };
-          sidewalkEdge = { x: centerX + sidewalkEdgeOffset * side, z };
-        }
-
-        const distance = Math.hypot(
-          endpoint.x - sidewalkEdge.x,
-          endpoint.z - sidewalkEdge.z,
-        );
-        if (distance < closestDistance) {
-          closestDistance = distance;
+        const approach = closestRoadApproach(endpoint, road);
+        if (approach !== null && (
+          closestApproach === null || approach.sidewalkDistance < closestApproach.sidewalkDistance
+        )) {
           closestRoad = road;
-          closestRoadEdge = roadEdge;
+          closestApproach = approach;
         }
       }
 
-      if (closestRoad !== null && closestRoadEdge !== null) {
+      if (closestRoad !== null && closestApproach !== null) {
         entrances.push({
           endpoint,
           road: closestRoad,
-          roadEdge: closestRoadEdge,
+          roadCenter: closestApproach.roadCenter,
+          roadEdge: closestApproach.roadEdge,
+          roadNormal: closestApproach.roadNormal,
           width: Math.max(MINIMUM_ENTRANCE_WIDTH, path.width),
         });
       }
@@ -314,9 +391,8 @@ function appendCrosswalk(
   positions: number[],
   entrance: PublicGreenEntrance,
 ): void {
-  const { road } = entrance;
   const stripeCount = Math.max(1, Math.floor(
-    (road.width + CROSSWALK_STRIPE_GAP)
+    (entrance.road.width + CROSSWALK_STRIPE_GAP)
       / (CROSSWALK_STRIPE_LENGTH + CROSSWALK_STRIPE_GAP),
   ));
   const occupiedLength = stripeCount * CROSSWALK_STRIPE_LENGTH
@@ -327,37 +403,20 @@ function appendCrosswalk(
     const stripeStart = firstStripeOffset
       + stripe * (CROSSWALK_STRIPE_LENGTH + CROSSWALK_STRIPE_GAP);
     const stripeEnd = stripeStart + CROSSWALK_STRIPE_LENGTH;
-    if (road.orientation === 'east-west') {
-      const centerZ = (road.centerline.from.z + road.centerline.to.z) * 0.5;
-      appendTerrainRect(positions, {
-        minX: entrance.roadEdge.x - entrance.width * 0.5,
-        maxX: entrance.roadEdge.x + entrance.width * 0.5,
-        minZ: centerZ + stripeStart,
-        maxZ: centerZ + stripeEnd,
-      }, LAYERS.crosswalk);
-    } else {
-      const centerX = (road.centerline.from.x + road.centerline.to.x) * 0.5;
-      appendTerrainRect(positions, {
-        minX: centerX + stripeStart,
-        maxX: centerX + stripeEnd,
-        minZ: entrance.roadEdge.z - entrance.width * 0.5,
-        maxZ: entrance.roadEdge.z + entrance.width * 0.5,
-      }, LAYERS.crosswalk);
-    }
+    appendStripSegment(
+      positions,
+      {
+        x: entrance.roadCenter.x + entrance.roadNormal.x * stripeStart,
+        z: entrance.roadCenter.z + entrance.roadNormal.z * stripeStart,
+      },
+      {
+        x: entrance.roadCenter.x + entrance.roadNormal.x * stripeEnd,
+        z: entrance.roadCenter.z + entrance.roadNormal.z * stripeEnd,
+      },
+      entrance.width,
+      LAYERS.crosswalk,
+    );
   }
-}
-
-function offsetLine(segment: LineSegment, offset: number): LineSegment {
-  const deltaX = segment.to.x - segment.from.x;
-  const deltaZ = segment.to.z - segment.from.z;
-  const length = Math.hypot(deltaX, deltaZ);
-  if (length === 0) return segment;
-  const offsetX = (-deltaZ / length) * offset;
-  const offsetZ = (deltaX / length) * offset;
-  return {
-    from: { x: segment.from.x + offsetX, z: segment.from.z + offsetZ },
-    to: { x: segment.to.x + offsetX, z: segment.to.z + offsetZ },
-  };
 }
 
 function insetBounds(bounds: Bounds2, inset: number): Bounds2 | null {
@@ -536,32 +595,29 @@ function createGateInstances(): readonly BoxInstance[] {
   return instances;
 }
 
-function createCoastEdgeInstances(): readonly BoxInstance[] {
-  const northSouthRoads = ROAD_SPECS.filter(({ orientation }) => orientation === 'north-south');
-  const cuts = northSouthRoads
-    .map((road) => ({
-      start: road.centerline.from.x - road.width * 0.5 - road.sidewalkWidth - COAST_ACCESS_MARGIN,
-      end: road.centerline.from.x + road.width * 0.5 + road.sidewalkWidth + COAST_ACCESS_MARGIN,
+function createCoastScreenInstances(): readonly BoxInstance[] {
+  const { screen } = DISTRICT_DATA.coast;
+  const minX = DISTRICT_DATA.coast.seaBounds.minX;
+  const maxX = DISTRICT_DATA.coast.seaBounds.maxX;
+  const cuts = screen.openings
+    .map((opening) => ({
+      start: Math.max(minX, Math.min(maxX, Math.min(opening.minX, opening.maxX))) - minX,
+      end: Math.max(minX, Math.min(maxX, Math.max(opening.minX, opening.maxX))) - minX,
     }))
+    .filter(({ start, end }) => end > start)
     .sort((first, second) => first.start - second.start);
-  const minX = DISTRICT_DATA.navigableBounds.minX;
-  const maxX = DISTRICT_DATA.navigableBounds.maxX;
-  const clampedCuts = cuts.map(({ start, end }) => ({
-    start: Math.max(minX, start) - minX,
-    end: Math.min(maxX, end) - minX,
-  }));
-  const intervals = remainingIntervals(maxX - minX, clampedCuts);
+  const intervals = remainingIntervals(maxX - minX, cuts);
   const segment = {
-    from: { x: minX, z: DISTRICT_DATA.coast.edgeZ },
-    to: { x: maxX, z: DISTRICT_DATA.coast.edgeZ },
+    from: { x: minX, z: screen.z },
+    to: { x: maxX, z: screen.z },
   };
   const instances: BoxInstance[] = [];
   appendSegmentBoxes(
     instances,
     segment,
     intervals,
-    COAST_EDGE_HEIGHT,
-    COAST_EDGE_THICKNESS,
+    screen.height,
+    COAST_SCREEN_THICKNESS,
     COAST_SECTION_LENGTH,
   );
   return instances;
@@ -600,14 +656,13 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
   const roadPositions: number[] = [];
   const sidewalkPositions: number[] = [];
   for (const road of ROAD_SPECS) {
-    appendStripSegment(roadPositions, road.centerline.from, road.centerline.to, road.width, LAYERS.road);
+    const centerline = [road.centerline.from, ...road.centerline.via, road.centerline.to];
+    appendPolylineStrip(roadPositions, centerline, road.width, LAYERS.road);
     const sidewalkOffset = road.width * 0.5 + road.sidewalkWidth * 0.5;
-    for (const side of [-1, 1] as const) {
-      const sidewalk = offsetLine(road.centerline, sidewalkOffset * side);
-      appendStripSegment(
+    for (const sidewalkCenterline of offsetPolylines(centerline, sidewalkOffset)) {
+      appendPolylineStrip(
         sidewalkPositions,
-        sidewalk.from,
-        sidewalk.to,
+        sidewalkCenterline,
         road.sidewalkWidth,
         LAYERS.sidewalk,
       );
@@ -641,7 +696,9 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
   ));
 
   const publicPathPositions: number[] = [];
-  for (const path of DISTRICT_DATA.publicGreen.paths) appendPath(publicPathPositions, path, LAYERS.path);
+  for (const path of DISTRICT_DATA.publicGreen.paths) {
+    appendPolylineStrip(publicPathPositions, path.centerline, path.width, LAYERS.path);
+  }
   root.add(createSurfaceMesh(
     resources,
     group,
@@ -674,7 +731,12 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
   );
 
   const promenadePositions: number[] = [];
-  appendPath(promenadePositions, DISTRICT_DATA.coast.promenade, LAYERS.promenade);
+  appendPolylineStrip(
+    promenadePositions,
+    DISTRICT_DATA.coast.promenade.centerline,
+    DISTRICT_DATA.coast.promenade.width,
+    LAYERS.promenade,
+  );
   root.add(createSurfaceMesh(
     resources,
     group,
@@ -702,7 +764,7 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
   const unitBox = resources.register(new BoxGeometry(1, 1, 1), group);
   const wallMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.wall) }), group);
   const gateMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.gate) }), group);
-  const coastMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.coastEdge) }), group);
+  const coastMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.coastScreen) }), group);
   const walls = createInstancedBoxes(
     resources,
     group,
@@ -719,17 +781,17 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
     gateMaterial,
     createGateInstances(),
   );
-  const coastEdge = createInstancedBoxes(
+  const coastScreen = createInstancedBoxes(
     resources,
     group,
-    'street:selective-coastal-edge',
+    'street:coastal-view-screen',
     unitBox,
     coastMaterial,
-    createCoastEdgeInstances(),
+    createCoastScreenInstances(),
   );
   if (walls !== null) root.add(walls);
   if (gates !== null) root.add(gates);
-  if (coastEdge !== null) root.add(coastEdge);
+  if (coastScreen !== null) root.add(coastScreen);
 
   return root;
 }

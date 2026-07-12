@@ -22,40 +22,40 @@ const verticalWall = (x: number, minZ: number, maxZ: number): LineSegment => ({
 });
 
 const eastWestRoads = [
-  ['shaoguan', 'Shaoguan Road', -260],
-  ['ningwuguan', 'Ningwuguan Road', -215],
-  ['zijingguan', 'Zijingguan Road', -170],
-  ['zhengyangguan', 'Zhengyangguan Road', -125],
-  ['jiayuguan', 'Jiayuguan Road', -80],
-  ['juyongguan', 'Juyongguan Road', -35],
-  ['linhuaiguan', 'Linhuaiguan Road', 10],
+  ['shaoguan', 'Shaoguan Road', -260, []],
+  ['ningwuguan', 'Ningwuguan Road', -215, [{ x: -70, z: -212 }, { x: 70, z: -218 }]],
+  ['zijingguan', 'Zijingguan Road', -170, []],
+  ['zhengyangguan', 'Zhengyangguan Road', -125, [{ x: -60, z: -129 }, { x: 70, z: -122 }]],
+  ['jiayuguan', 'Jiayuguan Road', -80, []],
+  ['juyongguan', 'Juyongguan Road', -35, [{ x: -80, z: -32 }, { x: 80, z: -38 }]],
+  ['linhuaiguan', 'Linhuaiguan Road', 10, []],
 ] as const;
 
 const northSouthRoads = [
-  ['wushengguan', 'Wushengguan Road', -120],
-  ['hangu-pass', 'Hangu Pass Road', 0],
-  ['shanhaiguan', 'Shanhaiguan Road', 120],
+  ['wushengguan', 'Wushengguan Road', -120, [{ x: -117, z: -70 }, { x: -123, z: -180 }]],
+  ['hangu-pass', 'Hangu Pass Road', 0, []],
+  ['shanhaiguan', 'Shanhaiguan Road', 120, [{ x: 124, z: -80 }, { x: 117, z: -200 }]],
 ] as const;
 
 const roadInference = inference(
-  'Simplified straight grid authored from the requested Badaguan road-name set; not surveyed or geospatial.',
+  'Simplified named grid with restrained terrain-led turns authored for this experience; not surveyed or geospatial.',
 );
 
 const authoredRoads: readonly RoadSpec[] = [
-  ...eastWestRoads.map(([id, name, z]) => ({
+  ...eastWestRoads.map(([id, name, z, via]) => ({
     id,
     name,
     orientation: 'east-west' as const,
-    centerline: { from: { x: -200, z }, to: { x: 200, z } },
+    centerline: { from: { x: -200, z }, via, to: { x: 200, z } },
     width: 12,
     sidewalkWidth: 3,
     inference: roadInference,
   })),
-  ...northSouthRoads.map(([id, name, x]) => ({
+  ...northSouthRoads.map(([id, name, x, via]) => ({
     id,
     name,
     orientation: 'north-south' as const,
-    centerline: { from: { x, z: 38 }, to: { x, z: -290 } },
+    centerline: { from: { x, z: 38 }, via, to: { x, z: -290 } },
     width: 12,
     sidewalkWidth: 3,
     inference: roadInference,
@@ -95,33 +95,33 @@ const authoredDistrict = {
   parcels: [
     {
       id: 'west-garden-parcel',
-      bounds: { minX: -190, maxX: -135, minZ: -155, maxZ: -95 },
-      setback: 8,
+      bounds: { minX: -190, maxX: -135, minZ: -201, maxZ: -184 },
+      setback: 5,
       wallSegments: [
-        horizontalWall(-190, -135, -155), horizontalWall(-190, -135, -95),
-        verticalWall(-190, -155, -95), verticalWall(-135, -155, -95),
+        horizontalWall(-190, -135, -201), horizontalWall(-190, -135, -184),
+        verticalWall(-190, -201, -184), verticalWall(-135, -201, -184),
       ],
-      gates: [{ id: 'west-garden-gate', position: { x: -135, z: -125 }, width: 4, facesRoadId: 'zhengyangguan' }],
+      gates: [{ id: 'west-garden-gate', position: { x: -162, z: -201 }, width: 4, facesRoadId: 'ningwuguan' }],
     },
     {
       id: 'central-garden-parcel',
-      bounds: { minX: 18, maxX: 92, minZ: -155, maxZ: -95 },
-      setback: 10,
+      bounds: { minX: 18, maxX: 92, minZ: -111, maxZ: -94 },
+      setback: 5,
       wallSegments: [
-        horizontalWall(18, 92, -155), horizontalWall(18, 92, -95),
-        verticalWall(18, -155, -95), verticalWall(92, -155, -95),
+        horizontalWall(18, 92, -111), horizontalWall(18, 92, -94),
+        verticalWall(18, -111, -94), verticalWall(92, -111, -94),
       ],
-      gates: [{ id: 'central-garden-gate', position: { x: 18, z: -125 }, width: 5, facesRoadId: 'zhengyangguan' }],
+      gates: [{ id: 'central-garden-gate', position: { x: 55, z: -111 }, width: 5, facesRoadId: 'zhengyangguan' }],
     },
     {
       id: 'east-garden-parcel',
-      bounds: { minX: 135, maxX: 190, minZ: -245, maxZ: -185 },
-      setback: 8,
+      bounds: { minX: 135, maxX: 190, minZ: -201, maxZ: -184 },
+      setback: 5,
       wallSegments: [
-        horizontalWall(135, 190, -245), horizontalWall(135, 190, -185),
-        verticalWall(135, -245, -185), verticalWall(190, -245, -185),
+        horizontalWall(135, 190, -201), horizontalWall(135, 190, -184),
+        verticalWall(135, -201, -184), verticalWall(190, -201, -184),
       ],
-      gates: [{ id: 'east-garden-gate', position: { x: 135, z: -215 }, width: 4, facesRoadId: 'ningwuguan' }],
+      gates: [{ id: 'east-garden-gate', position: { x: 162, z: -201 }, width: 4, facesRoadId: 'ningwuguan' }],
     },
   ],
   publicGreen: {
@@ -138,6 +138,16 @@ const authoredDistrict = {
     edgeZ: 38,
     promenade: { id: 'coastal-promenade', centerline: [{ x: -200, z: 34 }, { x: 200, z: 34 }], width: 6 },
     seaBounds: { minX: -210, maxX: 210, minZ: 38, maxZ: 60 },
+    screen: {
+      z: 36,
+      height: 2.6,
+      openings: [
+        { id: 'wushengguan-coast-opening', minX: -127, maxX: -113, alignedRoadId: 'wushengguan' },
+        { id: 'hangu-pass-coast-opening', minX: -7, maxX: 7, alignedRoadId: 'hangu-pass' },
+        { id: 'shanhaiguan-coast-opening', minX: 113, maxX: 127, alignedRoadId: 'shanhaiguan' },
+      ],
+      inference: inference('Structural coast screen and three road-aligned view openings authored for selective eye-level sea exposure; not surveyed.'),
+    },
     collidable: false,
   },
   collisionFootprints: [

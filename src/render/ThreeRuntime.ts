@@ -60,6 +60,43 @@ export interface WorldRuntimeMetrics {
     readonly transverseCount: number;
     readonly longitudinalCount: number;
     readonly names: readonly string[];
+    readonly centerlines: readonly {
+      readonly id: string;
+      readonly orientation: 'east-west' | 'north-south';
+      readonly from: Vec2;
+      readonly via: readonly Vec2[];
+      readonly to: Vec2;
+    }[];
+  };
+  readonly parcels: readonly {
+    readonly id: string;
+    readonly bounds: Bounds2;
+    readonly setback: number;
+    readonly wallSegments: readonly {
+      readonly from: Vec2;
+      readonly to: Vec2;
+    }[];
+    readonly gates: readonly {
+      readonly id: string;
+      readonly position: Vec2;
+      readonly width: number;
+      readonly facesRoadId: string;
+    }[];
+  }[];
+  readonly coast: {
+    readonly edgeZ: number;
+    readonly seaBounds: Bounds2;
+    readonly collidable: false;
+    readonly screen: {
+      readonly z: number;
+      readonly height: number;
+      readonly openings: readonly {
+        readonly id: string;
+        readonly minX: number;
+        readonly maxX: number;
+        readonly alignedRoadId: string;
+      }[];
+    };
   };
   readonly bounds: { readonly world: Bounds2; readonly navigable: Bounds2 };
   readonly grade: { readonly spawnHeight: number; readonly northHeight: number; readonly southHeight: number };
@@ -496,7 +533,39 @@ export class ThreeRuntime {
     const transverseCount = data.roads.filter((road) => road.orientation === 'east-west').length;
     const longitudinalCount = data.roads.length - transverseCount;
     return {
-      roads: { count: data.roads.length, transverseCount, longitudinalCount, names: data.roads.map((road) => road.name) },
+      roads: {
+        count: data.roads.length,
+        transverseCount,
+        longitudinalCount,
+        names: data.roads.map((road) => road.name),
+        centerlines: data.roads.map((road) => ({
+          id: road.id,
+          orientation: road.orientation,
+          from: road.centerline.from,
+          via: road.centerline.via,
+          to: road.centerline.to,
+        })),
+      },
+      parcels: data.parcels.map((parcel) => ({
+        id: parcel.id,
+        bounds: parcel.bounds,
+        setback: parcel.setback,
+        wallSegments: parcel.wallSegments.map((segment) => ({
+          from: segment.from,
+          to: segment.to,
+        })),
+        gates: parcel.gates.map((gate) => ({ ...gate })),
+      })),
+      coast: {
+        edgeZ: data.coast.edgeZ,
+        seaBounds: data.coast.seaBounds,
+        collidable: data.coast.collidable,
+        screen: {
+          z: data.coast.screen.z,
+          height: data.coast.screen.height,
+          openings: data.coast.screen.openings.map((opening) => ({ ...opening })),
+        },
+      },
       bounds: { world: data.worldBounds, navigable: data.navigableBounds },
       grade: {
         spawnHeight: navigation.sampleGroundHeight(data.spawn.x, data.spawn.z),

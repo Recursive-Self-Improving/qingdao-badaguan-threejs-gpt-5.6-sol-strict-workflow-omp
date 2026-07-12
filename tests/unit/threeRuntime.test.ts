@@ -236,6 +236,74 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(runtime.worldBuildResult).toBe(builds[0]);
     expect(runtime.camera.rotation.y).toBeCloseTo(DISTRICT_DATA.spawnYaw);
     expect(runtime.metrics.world.debug.visible).toBe(false);
+    expect(runtime.metrics.world.roads.centerlines.filter(({ via }) => via.length > 0).map(({ id, via }) => ({ id, via }))).toEqual([
+      { id: 'ningwuguan', via: [{ x: -70, z: -212 }, { x: 70, z: -218 }] },
+      { id: 'zhengyangguan', via: [{ x: -60, z: -129 }, { x: 70, z: -122 }] },
+      { id: 'juyongguan', via: [{ x: -80, z: -32 }, { x: 80, z: -38 }] },
+      { id: 'wushengguan', via: [{ x: -117, z: -70 }, { x: -123, z: -180 }] },
+      { id: 'shanhaiguan', via: [{ x: 124, z: -80 }, { x: 117, z: -200 }] },
+    ]);
+    for (const road of runtime.metrics.world.roads.centerlines) {
+      expect(road.from).toEqual(road.orientation === 'east-west'
+        ? { x: -200, z: road.from.z }
+        : { x: road.from.x, z: 38 });
+      expect(road.to).toEqual(road.orientation === 'east-west'
+        ? { x: 200, z: road.to.z }
+        : { x: road.to.x, z: -290 });
+      for (const point of road.via) {
+        const turnOffset = road.orientation === 'east-west'
+          ? Math.abs(point.z - road.from.z)
+          : Math.abs(point.x - road.from.x);
+        expect(turnOffset).toBeGreaterThan(0);
+        expect(turnOffset).toBeLessThanOrEqual(4);
+      }
+    }
+    expect(runtime.metrics.world.parcels).toMatchObject([
+      {
+        id: 'west-garden-parcel',
+        bounds: { minX: -190, maxX: -135, minZ: -201, maxZ: -184 },
+        setback: 5,
+        gates: [{ id: 'west-garden-gate', position: { x: -162, z: -201 }, width: 4, facesRoadId: 'ningwuguan' }],
+      },
+      {
+        id: 'central-garden-parcel',
+        bounds: { minX: 18, maxX: 92, minZ: -111, maxZ: -94 },
+        setback: 5,
+        gates: [{ id: 'central-garden-gate', position: { x: 55, z: -111 }, width: 5, facesRoadId: 'zhengyangguan' }],
+      },
+      {
+        id: 'east-garden-parcel',
+        bounds: { minX: 135, maxX: 190, minZ: -201, maxZ: -184 },
+        setback: 5,
+        gates: [{ id: 'east-garden-gate', position: { x: 162, z: -201 }, width: 4, facesRoadId: 'ningwuguan' }],
+      },
+    ]);
+    for (const parcel of runtime.metrics.world.parcels) {
+      expect(parcel.wallSegments).toHaveLength(4);
+      for (const segment of parcel.wallSegments) {
+        for (const point of [segment.from, segment.to]) {
+          const onBoundary = point.x === parcel.bounds.minX || point.x === parcel.bounds.maxX ||
+            point.z === parcel.bounds.minZ || point.z === parcel.bounds.maxZ;
+          expect(onBoundary).toBe(true);
+        }
+      }
+    }
+    expect(runtime.metrics.world.coast).toEqual({
+      edgeZ: 38,
+      seaBounds: { minX: -210, maxX: 210, minZ: 38, maxZ: 60 },
+      collidable: false,
+      screen: {
+        z: 36,
+        height: 2.6,
+        openings: [
+          { id: 'wushengguan-coast-opening', minX: -127, maxX: -113, alignedRoadId: 'wushengguan' },
+          { id: 'hangu-pass-coast-opening', minX: -7, maxX: 7, alignedRoadId: 'hangu-pass' },
+          { id: 'shanhaiguan-coast-opening', minX: 113, maxX: 127, alignedRoadId: 'shanhaiguan' },
+        ],
+      },
+    });
+    expect(runtime.metrics.world.coast.screen.height).toBeGreaterThan(APP_CONFIG.camera.eyeHeight);
+    expect(runtime.metrics.world.coast.screen.openings).toHaveLength(3);
 
     runtime.setWorldDebugVisible(true);
     const publicGreenAnchor = DISTRICT_DATA.routeAnchors.find((candidate) => candidate.kind === 'public-green');
