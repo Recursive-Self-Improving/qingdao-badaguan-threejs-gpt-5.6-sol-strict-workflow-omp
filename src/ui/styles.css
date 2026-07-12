@@ -606,6 +606,7 @@ button:disabled {
   margin: 0;
 }
 
+html:has(.no-script) #app-canvas,
 html:has(.no-script) .interface-layer,
 html:has(.no-script) #app-status {
   display: none;
@@ -628,6 +629,17 @@ html:has(.no-script) #app-status {
 .no-script h2,
 .no-script p {
   margin-block: 0 var(--space-2);
+}
+
+@media (min-width: 52rem) and (min-height: 40rem) {
+  :where(
+    .app-shell[data-app-state="unsupported"],
+    .app-shell[data-app-state="fatal"]
+  ) .experience-panel {
+    bottom: var(--space-3);
+    max-height: calc(100% - var(--space-8) - var(--space-1));
+    padding-block: var(--space-4);
+  }
 }
 
 @media (max-width: 52rem) {

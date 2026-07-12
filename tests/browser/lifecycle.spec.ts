@@ -153,13 +153,26 @@ test('Settings drawer isolates the background and returns focus to its trigger',
   await expectOnboarding(page);
   const settings = page.getByTestId('settings-button');
   await activate(page, settings, 'Space');
-  await expect(page.getByTestId('settings-panel')).toBeVisible();
+  const settingsPanel = page.getByTestId('settings-panel');
+  await expect(settingsPanel).toBeVisible();
   await expect(settings).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#app-overlay')).toHaveAttribute('inert', '');
+  await expect(page.locator('#app-controls')).toHaveAttribute('inert', '');
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('close-settings-button')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect.poll(() => page.evaluate(() => {
+    const active = document.activeElement;
+    return active !== null &&
+      !document.querySelector('#app-overlay')?.contains(active) &&
+      !document.querySelector('#app-controls')?.contains(active);
+  })).toBe(true);
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('settings-panel')).toBeHidden();
+  await expect(settingsPanel).toBeHidden();
   await expect(settings).toBeFocused();
   await expect(settings).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#app-overlay')).not.toHaveAttribute('inert', '');
+  await expect(page.locator('#app-controls')).not.toHaveAttribute('inert', '');
 });
 
 test('Escape pauses drag exploration and keyboard Resume restores it', async ({ page }) => {
