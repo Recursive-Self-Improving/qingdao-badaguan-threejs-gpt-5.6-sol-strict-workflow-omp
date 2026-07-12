@@ -7,11 +7,23 @@
     "node": ">=24 <25"
   },
   "packageManager": "npm@11.16.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.18.0",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": "11.16.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest run --passWithNoTests",
+    "test:unit": "vitest run",
     "test:browser": "playwright test --config playwright.config.ts tests/browser",
     "test:visual": "playwright test --config playwright.config.ts tests/visual"
   },

@@ -1,11 +1,4 @@
-import './ui/styles.css';
-
-interface AppShellElements {
-  readonly root: HTMLElement;
-  readonly canvas: HTMLCanvasElement;
-  readonly status: HTMLElement;
-  readonly controls: HTMLElement;
-}
+import { applyShellPresentation, getShellPresentation, type ShellElements } from './ui/shellContract';
 
 class ShellBootstrapError extends Error {
   constructor(selector: string) {
@@ -27,7 +20,7 @@ function requireElement<T extends Element>(
   return element;
 }
 
-function collectShellElements(): AppShellElements {
+function collectShellElements(): ShellElements {
   return {
     root: requireElement('#app', HTMLElement),
     canvas: requireElement('#app-canvas', HTMLCanvasElement),
@@ -36,11 +29,8 @@ function collectShellElements(): AppShellElements {
   };
 }
 
-function renderReadyShell({ root, canvas, status, controls }: AppShellElements): void {
-  root.dataset.appState = 'ready';
-  canvas.tabIndex = 0;
-  status.textContent = 'The application shell is ready. The interactive landscape will begin here.';
-  controls.setAttribute('aria-busy', 'false');
+function renderReadyShell(elements: ShellElements): void {
+  applyShellPresentation(elements, getShellPresentation('ready'));
 }
 
 function bootstrap(): void {

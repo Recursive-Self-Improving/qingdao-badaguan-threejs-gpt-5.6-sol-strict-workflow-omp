@@ -7,6 +7,11 @@
       name="description"
       content="An interactive, interpretive walk through Qingdao Badaguan's leafy coastal villa district."
     />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; object-src 'none'; base-uri 'none'"
+    />
+    <link rel="stylesheet" href="/src/ui/styles.css" />
     <meta name="theme-color" content="#173f40" />
     <title>Qingdao Badaguan — Interactive Landscape</title>
   </head>
@@ -30,7 +35,7 @@
       <main id="experience" class="experience" aria-labelledby="experience-title">
         <canvas
           id="app-canvas"
-          aria-label="Interactive view of Qingdao Badaguan"
+          aria-label="Badaguan landscape view"
           aria-describedby="canvas-description"
         >
           Your browser cannot display the interactive canvas. Badaguan is a leafy, historic
@@ -46,16 +51,11 @@
             detached garden villas, gentle southern slope, and maritime morning haze.
           </p>
           <p id="app-status" class="status" role="status" aria-live="polite" aria-atomic="true">
-            Preparing the experience shell…
+            Loading Badaguan…
           </p>
         </section>
 
-        <section
-          id="app-controls"
-          class="controls-region"
-          aria-label="Experience controls"
-          aria-live="polite"
-        ></section>
+        <section id="app-controls" class="controls-region" aria-label="Experience controls"></section>
       </main>
 
       <footer class="site-footer">
