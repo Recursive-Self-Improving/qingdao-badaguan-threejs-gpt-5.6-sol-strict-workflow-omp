@@ -1021,52 +1021,114 @@ function addFacadeWindows(
   return frontWindows;
 }
 
-function frameFrontWindows(
+function addPrincessCraftedWindow(
   context: RecipeContext,
-  windows: readonly FrontWindow[],
-  materialId: VillaMaterialId,
-  prefix: string,
+  name: string,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  yaw = 0,
 ): void {
-  const thickness = 0.13;
-  for (let index = 0; index < windows.length; index += 1) {
-    const window = windows[index];
-    if (window === undefined) continue;
-    const z = window.z + TRIM_PROJECTION;
+  const revealBand = 0.18;
+  const frameThickness = 0.2;
+  const mullionThickness = 0.12;
+  const cosine = Math.cos(yaw);
+  const sine = Math.sin(yaw);
+  const placeTrim = (
+    part: string,
+    materialId: VillaMaterialId,
+    lateral: number,
+    centerY: number,
+    outward: number,
+    partWidth: number,
+    partHeight: number,
+    depth: number,
+  ): void => {
     queueTrim(
       context,
-      `${prefix}-left-${index}`,
+      `${name}-${part}`,
       materialId,
-      window.x - window.width * 0.5 - thickness * 0.5,
-      window.y,
-      z,
-      thickness,
-      window.height + thickness * 2,
-      0.1,
+      x + lateral * cosine + outward * sine,
+      centerY,
+      z - lateral * sine + outward * cosine,
+      partWidth,
+      partHeight,
+      depth,
+      yaw,
     );
-    queueTrim(
-      context,
-      `${prefix}-right-${index}`,
-      materialId,
-      window.x + window.width * 0.5 + thickness * 0.5,
-      window.y,
-      z,
-      thickness,
-      window.height + thickness * 2,
-      0.1,
+  };
+
+  placeTrim(
+    'reveal',
+    'dark-wood',
+    0,
+    y,
+    0.1,
+    width + revealBand * 2,
+    height + revealBand * 2,
+    0.2,
+  );
+  queueWindow(
+    context,
+    `${name}-glazing`,
+    'dark-window',
+    x + 0.22 * sine,
+    y,
+    z + 0.22 * cosine,
+    width,
+    height,
+    yaw,
+  );
+
+  const frameOffset = 0.34;
+  const frameCenter = width * 0.5 + revealBand + frameThickness * 0.5;
+  const frameHeight = height + (revealBand + frameThickness) * 2;
+  const frameWidth = width + (revealBand + frameThickness) * 2;
+  for (const side of [-1, 1] as const) {
+    placeTrim(
+      side < 0 ? 'left-surround' : 'right-surround',
+      'warm-timber',
+      side * frameCenter,
+      y,
+      frameOffset,
+      frameThickness,
+      frameHeight,
+      0.24,
     );
-    for (const verticalSide of [-1, 1] as const) {
-      queueTrim(
-        context,
-        `${prefix}-${verticalSide < 0 ? 'bottom' : 'top'}-${index}`,
-        materialId,
-        window.x,
-        window.y + verticalSide * (window.height * 0.5 + thickness * 0.5),
-        z,
-        window.width + thickness * 2,
-        thickness,
-        0.1,
-      );
-    }
+    placeTrim(
+      side < 0 ? 'bottom-surround' : 'top-surround',
+      'warm-timber',
+      0,
+      y + side * (height * 0.5 + revealBand + frameThickness * 0.5),
+      side < 0 ? 0.38 : frameOffset,
+      frameWidth,
+      frameThickness,
+      side < 0 ? 0.4 : 0.24,
+    );
+  }
+  placeTrim(
+    'center-mullion',
+    'warm-timber',
+    0,
+    y,
+    frameOffset + 0.01,
+    mullionThickness,
+    height,
+    0.22,
+  );
+  for (const side of [-1, 1] as const) {
+    placeTrim(
+      side < 0 ? 'lower-crossbar' : 'upper-crossbar',
+      'warm-timber',
+      0,
+      y + side * height * 0.22,
+      frameOffset + 0.01,
+      width,
+      mullionThickness,
+      0.22,
+    );
   }
 }
 
@@ -1510,9 +1572,12 @@ function buildPrincessNordic(context: RecipeContext): void {
   const plan = createPlan(context.site, 0.7, 0.68);
   const storyHeight = 2.7;
   const wallHeight = storyHeight * 2;
+  const projectionWidth = plan.width * 0.34;
   const projectionDepth = plan.depth * 0.16;
   const frontZ = plan.centerZ + plan.depth * 0.5;
+  const rearZ = plan.centerZ - plan.depth * 0.5;
   const projectionCenterZ = frontZ + projectionDepth * 0.5;
+  const projectionFrontZ = frontZ + projectionDepth;
 
   addWall(
     context,
@@ -1530,7 +1595,7 @@ function buildPrincessNordic(context: RecipeContext): void {
     'pine-green-stucco',
     plan.centerX,
     projectionCenterZ,
-    plan.width * 0.34,
+    projectionWidth,
     wallHeight * 0.88,
     projectionDepth,
   );
@@ -1558,34 +1623,188 @@ function buildPrincessNordic(context: RecipeContext): void {
     projectionDepth * 1.3,
     context.ground + wallHeight * 0.88,
   );
-  const frontWindows = addFacadeWindows(context, {
-    centerX: plan.centerX,
-    centerZ: plan.centerZ,
-    width: plan.width,
-    depth: plan.depth,
-    baseY: context.ground,
-    storyHeight,
-    floors: 2,
-    columns: 4,
-    sideColumns: 2,
-    windowWidth: 1.02,
-    windowHeight: 1.42,
-    materialId: 'dark-wood',
-    includeRear: true,
-  });
-  frameFrontWindows(context, frontWindows, 'dark-wood', 'crafted-window-frame');
+
+  const windowWidth = 0.92;
+  const windowHeight = 1.36;
+  const wingWidth = (plan.width - projectionWidth) * 0.5;
+  const wingCenterOffset = (projectionWidth + wingWidth) * 0.5;
+  const wingBayOffset = wingWidth * 0.235;
+  for (let floor = 0; floor < 2; floor += 1) {
+    const y = context.ground + storyHeight * (floor + 0.58);
+    for (const wingSide of [-1, 1] as const) {
+      for (const baySide of [-1, 1] as const) {
+        addPrincessCraftedWindow(
+          context,
+          `front-${wingSide < 0 ? 'left' : 'right'}-wing-${floor}-${baySide < 0 ? 'inner' : 'outer'}`,
+          plan.centerX + wingSide * wingCenterOffset + wingSide * baySide * wingBayOffset,
+          y,
+          frontZ,
+          windowWidth,
+          windowHeight,
+        );
+      }
+    }
+  }
+
+  const sideWindowZs = distributedOffsets(2, plan.depth * 0.45);
+  for (let floor = 0; floor < 2; floor += 1) {
+    const y = context.ground + storyHeight * (floor + 0.58);
+    for (const side of [-1, 1] as const) {
+      for (let index = 0; index < sideWindowZs.length; index += 1) {
+        const offset = sideWindowZs[index];
+        if (offset === undefined) continue;
+        addPrincessCraftedWindow(
+          context,
+          `${side < 0 ? 'left' : 'right'}-side-${floor}-${index}`,
+          plan.centerX + side * plan.width * 0.5,
+          y,
+          plan.centerZ + offset,
+          windowWidth,
+          windowHeight,
+          side * Math.PI * 0.5,
+        );
+      }
+    }
+  }
+
+  const rearWindowXs = distributedOffsets(3, plan.width * 0.68);
+  for (let floor = 0; floor < 2; floor += 1) {
+    const y = context.ground + storyHeight * (floor + 0.58);
+    for (let index = 0; index < rearWindowXs.length; index += 1) {
+      const offset = rearWindowXs[index];
+      if (offset === undefined) continue;
+      addPrincessCraftedWindow(
+        context,
+        `rear-${floor}-${index}`,
+        plan.centerX + offset,
+        y,
+        rearZ,
+        windowWidth,
+        windowHeight,
+        Math.PI,
+      );
+    }
+  }
+  addPrincessCraftedWindow(
+    context,
+    'entry-gable-upper',
+    plan.centerX,
+    context.ground + 3.9,
+    projectionFrontZ,
+    0.94,
+    0.82,
+  );
+
   queueDoor(
     context,
     'crafted-wood-door',
     plan.centerX,
-    frontZ + projectionDepth + WINDOW_PROJECTION,
+    projectionFrontZ + WINDOW_PROJECTION,
     1.32,
     2.35,
   );
+  const portalZ = projectionFrontZ + 0.3;
+  for (const side of [-1, 1] as const) {
+    queueTrim(
+      context,
+      `entrance-portal-${side < 0 ? 'left' : 'right'}-post`,
+      'warm-timber',
+      plan.centerX + side * 0.94,
+      context.ground + 1.25,
+      portalZ,
+      0.28,
+      2.5,
+      0.28,
+    );
+  }
+  queueTrim(
+    context,
+    'entrance-portal-lintel',
+    'warm-timber',
+    plan.centerX,
+    context.ground + 2.5,
+    portalZ,
+    2.16,
+    0.28,
+    0.28,
+  );
+  queueTrim(
+    context,
+    'entrance-threshold',
+    'warm-timber',
+    plan.centerX,
+    context.ground + 0.09,
+    projectionFrontZ + 0.3,
+    1.72,
+    0.18,
+    0.56,
+  );
+  for (const offset of [-0.36, 0, 0.36] as const) {
+    queueTrim(
+      context,
+      `door-vertical-slat-${offset}`,
+      'warm-timber',
+      plan.centerX + offset,
+      context.ground + 1.18,
+      projectionFrontZ + 0.26,
+      0.08,
+      1.8,
+      0.12,
+    );
+  }
+  for (const [index, height] of [0.5, 1.86].entries()) {
+    queueTrim(
+      context,
+      `door-horizontal-rail-${index}`,
+      'warm-timber',
+      plan.centerX,
+      context.ground + height,
+      projectionFrontZ + 0.27,
+      1.08,
+      0.1,
+      0.12,
+    );
+  }
+  addRoof(
+    context,
+    'nordic-timber-entry-canopy',
+    'unit-gable-roof',
+    'warm-timber',
+    plan.centerX,
+    projectionFrontZ + 0.3,
+    3.4,
+    0.55,
+    1,
+    context.ground + 2.66,
+  );
+  queueTrim(
+    context,
+    'entry-canopy-front-fascia',
+    'dark-wood',
+    plan.centerX,
+    context.ground + 2.72,
+    projectionFrontZ + 0.73,
+    3.56,
+    0.24,
+    0.14,
+  );
+  for (const side of [-1, 1] as const) {
+    queueTrim(
+      context,
+      `entry-canopy-${side < 0 ? 'left' : 'right'}-bracket`,
+      'dark-wood',
+      plan.centerX + side * 1.18,
+      context.ground + 2.4,
+      projectionFrontZ + 0.28,
+      0.22,
+      0.52,
+      0.5,
+    );
+  }
   addHorizontalBand(
     context,
     'nordic-timber-band',
-    'dark-wood',
+    'warm-timber',
     plan.centerX,
     frontZ,
     plan.width * 0.94,
@@ -1594,14 +1813,14 @@ function buildPrincessNordic(context: RecipeContext): void {
   for (const side of [-1, 1] as const) {
     queueTrim(
       context,
-      `gable-timber-post-${side < 0 ? 'left' : 'right'}`,
-      'dark-wood',
-      plan.centerX + side * plan.width * 0.13,
-      context.ground + wallHeight * 0.72,
-      frontZ + projectionDepth + TRIM_PROJECTION,
-      0.16,
-      wallHeight * 0.31,
-      0.12,
+      `entry-gable-corner-${side < 0 ? 'left' : 'right'}`,
+      'warm-timber',
+      plan.centerX + side * (projectionWidth * 0.5 - 0.12),
+      context.ground + wallHeight * 0.42,
+      projectionFrontZ + 0.22,
+      0.24,
+      wallHeight * 0.78,
+      0.24,
     );
   }
 }
