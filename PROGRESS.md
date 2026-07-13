@@ -273,6 +273,7 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 - **Session/date:** 2026-07-13
 - **Dependencies:** C06 complete
 - **Canonical tasks checked:** 3/3
+- **Readiness:** Implementation verified and sealed at draft commit `65ad30b`; independent implementation review pending.
 - [x] Implement the early-autumn morning sun/sky/environment setup, soft readable shadows, ambient fill, and contact grounding across architecture, foliage, paths, and terrain.
   - **Implementation evidence:** The implemented environment factory and typed controller contract provide an early-morning gradient sky, hemisphere fill, directional sun, linear fog, ACES tone mapping, sRGB output, calibrated exposure, and shadow control. Architecture, terrain, villa, vegetation, and detail material families are lit consistently. Tier policy preserves grounding with 2048/1024/512 shadow maps, and environment updates are transactional with deterministic disposal. The implementation surface includes the new environment factory and corresponding unit/browser/visual/config coverage, plus the integrated config, `AppController`, runtime/types, `createWorld`, terrain, streets, villa, vegetation, details, fixtures, tests, and package changes.
   - **Final task evidence:** Current same-seal all-20 visual QA and interaction QA are CLEAN, definitive automated gates are GREEN, and the refreshed evidence packet is integrity-sealed; the light/shadow/contact-grounding task is verified.
@@ -300,18 +301,18 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
   - **Current same-seal all-20 visual QA (CLEAN; not an implementation-review round):** `local://c07-evidence/reviews/final-all20.json` SHA-256 `0352e860b8de668e11167b37308294bb36bc248aaf445c95f0134533853ec5c7` (22350 bytes), reviewer `C07FinalBoundaryVisualReview`, matches all `20/20` current capture hashes under source manifest `11c56f…`. Verdict is terminal CLEAN with `0` HIGH, `0` MEDIUM, and `0` open findings; all current visual IDs are closed.
   - **Final refreshed evidence seal (integrity PASS; captured `2026-07-13T15:15:50.778804Z`, finalized `2026-07-13T15:24:12.745746Z`):** `local://c07-evidence/manifest.json` SHA-256 `784b200c2c41fef2bb53856261025d5d13fafc1a0ecbbee60c72d042f128c2c5` (27355 bytes); `local://c07-evidence/inventory.json` SHA-256 `d36eadf5686674bbf05d54a5724c1de3290b79a5fbee6611e752e709201b95d8` (2480 bytes; `PENDING`, `reviewed=false`, `implementationReviewerIds=[]`); `local://c07-evidence/c07-final-metrics.json` SHA-256 `c0565f4a6a8607dda241f923a7b39111518cd4f545744467e1c44d17b7c2c7ab` (36911 bytes; weighted mean luminance `0.520122`, histogram16 `[65036,112363,59781,132730,2060680,317653,124051,80483,7463871,727247,394581,600021,1667183,0,0,0]`, bins 0–1 step 0.0625); interaction reviewer `C07InteractionFocusedQA` packet SHA-256 `b6812a7924d4dd2729e28083ddfb3b88e8a4933cd0241d9a622d4ea72ad1d55a` (41324 bytes); visual reviewer `C07FinalBoundaryVisualReview` packet SHA-256 `0352e860b8de668e11167b37308294bb36bc248aaf445c95f0134533853ec5c7` (22350 bytes). Production smoke PASS: `local://c07-evidence/c07-production-proof.json` SHA-256 `f5f8860ec9cccee7a27c57494c6ce8efc422d3a6ab61a660b7fd80b49e544d5d` (4207 bytes), PNG SHA-256 `5816dad84665a325d9ad484d81fac183e004a83649fa786ab618484321314c86` (282730 bytes; canvas `1212×534`, mean `0.296419`, nonblack `1.0`, no human-visible error), HTTP `200×3`, zero request/console/page/CSP errors, DEV event/query inert, visible debug/metrics `0`, DEV keys `0`. Dist aggregate SHA-256 `d832d983026044dbc24793919f287a55752a1e79bfc885cf6aab05e907be7320` (717854 bytes/3 files); `dist/assets/index-LEjWQ71v.js` SHA-256 `5c06e7b143a97b67aff5c277f259e7fde8e96ce7de3137bea39e1fcc1878e4b9` (692061 bytes; gzip 178880 bytes). Overall packet status remains `PENDING` only because implementation review has not occurred; task evidence is sealed.
 - **PLAN review surface:** time-of-day coherence, exposure/color, fog depth, shadow fit/bias, coast restraint, quality degradation.
-  - **Implementation-review evidence:** pending; all three canonical tasks, acceptance/focused evidence, current QA, automated gates, production proof, and refreshed integrity seal are complete, but no independent implementation-review disposition exists yet.
+  - **Implementation-review evidence:** pending; all three canonical tasks, acceptance/focused evidence, current QA, automated gates, production proof, refreshed integrity seal, and draft implementation commit `65ad30b` are complete, but no independent implementation-review disposition exists yet.
 - **Planned commit boundary:** `feat: add Badaguan coastal light and atmosphere`
-- **Implementation commit hash(es):** pending; implementation is complete, verified, sealed, and uncommitted. Independent implementation review is pending.
+- **Implementation commit hash(es):** `65ad30b` (green draft implementation commit); implementation verified and sealed; independent review pending.
 - **Append-only implementation review and fix/re-review rounds:**
 
 | Round | Finding IDs | Review/fix evidence | Commit | Reviewer/date | Result (`clean` or new finding IDs) |
 |---|---|---|---|---|---|
-| 1 | pending | Independent implementation review pending over the fully implemented, verified, and sealed current C07 boundary. The CLEAN focused-QA packets are not implementation-review rounds. | pending | pending | pending |
+| Pre-review green draft | none — not an implementation-review round | Draft implementation commit `65ad30b` records the fully implemented, verified, and sealed current C07 boundary. The CLEAN focused-QA packets are not implementation-review rounds. | `65ad30b` | Draft boundary / 2026-07-13 | implementation verified and sealed; independent review pending |
 
 - **Latest review round is clean:** no
-- **Blocker:** none
-- **Unblock condition:** none
+- **Blocker:** independent implementation review pending.
+- **Unblock condition:** complete the independent implementation review and record its disposition; do not mark C07 clean or complete before a terminal clean review round.
 ---
 
 ## C08 — Implement desktop free-roam controls and movement safety
