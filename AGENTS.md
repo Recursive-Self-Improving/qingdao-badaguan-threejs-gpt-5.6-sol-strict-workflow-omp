@@ -5,3 +5,10 @@
 - Let `ResourceRegistry` generation groups own world-generation GPU resources (geometries, materials, textures, instanced meshes, and similar); dispose runtime-owned `WebGLRenderer` and lifecycle infrastructure directly in `ThreeRuntime`.
 - Keep DEV debug surfaces default-hidden; allocate them only after the DEV guard; expose synchronous commands and metrics only in DEV; and use view-specific filtered diagrams when making verifiable structural claims.
 - In production, retain only an inert scene stub and no reachable debug surface.
+- Keep architecture sites, views, and results canonical and immutable; finalize one generation-scoped shared `VillaKit` once.
+- Use custom connected, bounds-computed geometry for route/Low-critical silhouettes and crafted landmark cues; avoid relying on generic primitives for authored architectural identity.
+- Derive camera Y from the site ground and keep `viewpointId` provenance separate from the authored capture pose.
+- Set `probe.from` explicitly in local collision tests so probes remain deterministic and do not depend on implicit origins.
+- Playwright output cleaning can hide canvas captures; promote UI-hidden captures to durable artifacts before running other evidence checks.
+- Production screenshots may retain normal shell UI, but must not expose debug or architecture labels.
+- Keep CSP source tokens browser-valid; do not use an IPv6 wildcard port token.
