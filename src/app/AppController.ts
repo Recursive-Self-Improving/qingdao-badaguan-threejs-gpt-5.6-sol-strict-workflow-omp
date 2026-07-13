@@ -6,7 +6,7 @@ import {
   type AppState,
 } from './appState';
 import { detectCapabilities, type CapabilityDetectionOptions } from '../platform/capabilities';
-import { detectPreferences } from '../platform/preferences';
+import { detectPreferences, type PreferenceSnapshot } from '../platform/preferences';
 import { createAppUI, type AppUI, type AppUIAction } from '../ui/AppUI';
 import { ThreeRuntime } from '../render/ThreeRuntime';
 
@@ -61,6 +61,7 @@ export class AppController {
   private state: AppState = INITIAL_APP_STATE;
   private readonly scenario: DevelopmentScenario | null;
   private readonly capabilityOptions: CapabilityDetectionOptions | undefined;
+  private readonly preferences: PreferenceSnapshot;
   private readonly ui: AppUI;
   private runtime: ThreeRuntime | null = null;
   private destroyed = false;
@@ -82,8 +83,9 @@ export class AppController {
   constructor(location: Location = window.location, config: AppControllerConfig = {}) {
     this.scenario = readDevelopmentScenario(location);
     this.capabilityOptions = import.meta.env.DEV ? config.capabilityOptions : undefined;
+    this.preferences = detectPreferences();
     this.ui = createAppUI({
-      preferences: detectPreferences(),
+      preferences: this.preferences,
       onAction: (action) => this.handleUIAction(action),
     });
   }
@@ -201,6 +203,37 @@ export class AppController {
         this.runtime?.rebuildScene();
         return;
       }
+      if (detail?.action === 'landscape/set-settings') {
+        const settings = detail.settings;
+        if (typeof settings === 'object' && settings !== null) {
+          const candidate = settings as Record<string, unknown>;
+          const density = candidate.density;
+          const motion = candidate.motion;
+          if ((density === 'high' || density === 'medium' || density === 'low')
+            && (motion === 'standard' || motion === 'reduced')) {
+            this.runtime?.rebuildScene(Object.freeze({ density, motion }));
+          }
+        }
+        return;
+      }
+      if (detail?.action === 'landscape/freeze-time') {
+        if (typeof detail.time === 'number' && Number.isFinite(detail.time) && detail.time >= 0) {
+          this.runtime?.setLandscapeCaptureTime(detail.time);
+        }
+        return;
+      }
+      if (detail?.action === 'landscape/unfreeze') {
+        this.runtime?.setLandscapeCaptureTime(null);
+        return;
+      }
+      if (detail?.action === 'landscape/reset') {
+        this.runtime?.resetLandscape();
+        return;
+      }
+      if (detail?.action === 'landscape/frame') {
+        if (typeof detail.view === 'string') this.runtime?.frameLandscape(detail.view);
+        return;
+      }
       if (detail?.action === 'world-debug/set-visible') {
         if (typeof detail.visible === 'boolean') this.runtime?.setWorldDebugVisible(detail.visible);
         return;
@@ -210,7 +243,7 @@ export class AppController {
         return;
       }
       if (detail?.action === 'world-debug/frame-view') {
-        if (detail.name === 'grid' || detail.name === 'public-green' || detail.name === 'sightlines') {
+        if (detail.name === 'grid' || detail.name === 'public-green' || detail.name === 'sightlines' || detail.name === 'planting') {
           this.runtime?.frameWorldDebugView(detail.name);
         }
         return;
@@ -266,7 +299,12 @@ export class AppController {
     }
 
     try {
-      this.runtime = new ThreeRuntime(canvas);
+      this.runtime = new ThreeRuntime(canvas, {
+        landscapeSettings: Object.freeze({
+          density: 'high',
+          motion: this.preferences.prefersReducedMotion ? 'reduced' : 'standard',
+        }),
+      });
       return true;
     } catch {
       this.disposeRuntime();

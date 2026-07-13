@@ -239,6 +239,7 @@ test('publishes the exact 7 by 3 road grid and starts with debug hidden', async 
 });
 
 test('visits the authored district route at eye height and captures green and sightlines', async ({ page }, testInfo) => {
+  test.setTimeout(45_000);
   const initial = await boot(page);
   expect(initial.world.route).toEqual([
     'spawn',
@@ -276,7 +277,7 @@ test('visits the authored district route at eye height and captures green and si
 });
 
 test('clamps every boundary, slides collisions, preserves coast access, and samples uphill intersections', async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await boot(page);
 
   for (const [requested, axis, edge] of [

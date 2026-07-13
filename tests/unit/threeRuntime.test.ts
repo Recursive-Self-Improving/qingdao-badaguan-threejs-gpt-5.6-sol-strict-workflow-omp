@@ -9,7 +9,13 @@ import {
 } from '../../src/render/ThreeRuntime';
 import type { DisposableResource } from '../../src/render/ResourceRegistry';
 import { DISTRICT_DATA } from '../../src/world/districtData';
-import type { ArchitectureBuildResult, RouteAnchor, WorldBuildResult } from '../../src/world/types';
+import type {
+  ArchitectureBuildResult,
+  LandscapeBuildResult,
+  LandscapeSettings,
+  RouteAnchor,
+  WorldBuildResult,
+} from '../../src/world/types';
 import { sampleGroundHeight } from '../../src/world/terrain/createTerrain';
 import { resolveNavigation } from '../../src/exploration/navigation';
 
@@ -80,21 +86,74 @@ function architectureBuild(): ArchitectureBuildResult {
   });
 }
 
-function worldBuild(): WorldBuildResult {
+function landscapeBuild(
+  settings: LandscapeSettings = Object.freeze({ density: 'high', motion: 'standard' }),
+): LandscapeBuildResult {
+  const densityCounts = Object.freeze({
+    high: Object.freeze({ vegetationInstances: 100, identityInstances: 10, detailInstances: 40, drawCalls: 8, triangles: 1_000 }),
+    medium: Object.freeze({ vegetationInstances: 60, identityInstances: 10, detailInstances: 24, drawCalls: 7, triangles: 700 }),
+    low: Object.freeze({ vegetationInstances: 10, identityInstances: 10, detailInstances: 8, drawCalls: 5, triangles: 300 }),
+  });
+  const active = densityCounts[settings.density];
+  return {
+    root: new Group(),
+    settings,
+    metrics: Object.freeze({
+      settings,
+      densityCounts,
+      active,
+      identities: Object.freeze(DISTRICT_DATA.roadPlantingCues.map(({ roadId, species }) => Object.freeze({ roadId, speciesId: species }))),
+      lodBands: Object.freeze([
+        Object.freeze({ id: 'near' as const, maximumDistance: 60, canopySegments: 8 }),
+        Object.freeze({ id: 'mid' as const, maximumDistance: 140, canopySegments: 6 }),
+        Object.freeze({ id: 'far' as const, maximumDistance: 280, canopySegments: 4 }),
+      ]),
+      reuse: Object.freeze({
+        sharedGeometryCount: 6,
+        sharedMaterialCount: 8,
+        instanceBatchCount: 8,
+        instanceCount: active.vegetationInstances + active.detailInstances,
+        estimatedInstancedDrawCalls: active.drawCalls,
+        naiveRepeatedDrawCalls: active.vegetationInstances + active.detailInstances,
+      }),
+      motion: Object.freeze({ time: 0, amplitude: settings.motion === 'reduced' ? 0 : 0.025, transformChecksum: 1234 }),
+      clearanceIntersections: 0,
+      transparentObjects: 0,
+      depthWriteDisabled: 0,
+    }),
+    debugLayout: Object.freeze({
+      markers: Object.freeze(DISTRICT_DATA.roadPlantingCues.map((cue, index) => Object.freeze({
+        roadId: cue.roadId,
+        speciesId: cue.species,
+        position: Object.freeze({ x: index, z: -index }),
+      }))),
+      zones: DISTRICT_DATA.plantingZones,
+    }),
+    cameraViews: DISTRICT_DATA.landscapeCameraViews,
+    clearanceBounds: Object.freeze([]),
+    update: vi.fn(),
+    reset: vi.fn(),
+    setCaptureTime: vi.fn(),
+  };
+}
+
+function worldBuild(settings: LandscapeSettings = Object.freeze({ density: 'high', motion: 'standard' })): WorldBuildResult {
   const root = new Group();
   let visible = false;
   let currentAnchorId: string | null = null;
-  let currentView: 'grid' | 'public-green' | 'sightlines' | null = null;
+  let currentView: 'grid' | 'public-green' | 'sightlines' | 'planting' | null = null;
   return {
     root,
     data: DISTRICT_DATA,
     architecture: architectureBuild(),
+    landscape: landscapeBuild(settings),
     debug: {
       root: new Group(),
       get visible() { return visible; },
       get currentAnchorId() { return currentAnchorId; },
       get currentView() { return currentView; },
       roadLabelCount: 10,
+      plantingLabelCount: 10,
       sightlineCount: DISTRICT_DATA.sightlines.length,
       get publicGreenVisible() { return visible; },
       setVisible(nextVisible: boolean) { visible = nextVisible; },
@@ -485,6 +544,100 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(runtime.worldBuildResult).toBeNull();
     expect(runtime.scene.children).toEqual([]);
     expect(runtime.metrics.world.roads.count).toBe(10);
+  });
+
+  it('threads startup settings and updates landscape between onUpdate and onRender', () => {
+    const renderer = createRenderer();
+    const viewport = createViewport();
+    const order: string[] = [];
+    let builtSettings: LandscapeSettings | null = null;
+    const world = worldBuild(Object.freeze({ density: 'high', motion: 'reduced' }));
+    vi.mocked(world.landscape.update).mockImplementation(() => order.push('landscape'));
+    renderer.render.mockImplementation(() => { order.push('renderer'); });
+    const runtime = new ThreeRuntime(canvas, {
+      landscapeSettings: Object.freeze({ density: 'high', motion: 'reduced' }),
+      onUpdate: () => order.push('update'),
+      onRender: () => order.push('render-seam'),
+    }, dependencies(renderer, viewport, (_resources, _group, settings) => {
+      builtSettings = settings;
+      return world;
+    }));
+
+    const callback = renderer.setAnimationLoop.mock.calls[0]?.[0];
+    expect(callback).toEqual(expect.any(Function));
+    callback?.(1_000);
+
+    expect(builtSettings).toEqual({ density: 'high', motion: 'reduced' });
+    expect(order).toEqual(['update', 'landscape', 'render-seam', 'renderer']);
+    expect(runtime.metrics.world.landscape).toMatchObject({
+      settings: { density: 'high', motion: 'reduced' },
+      active: { vegetationInstances: 100, identityInstances: 10 },
+      motion: { amplitude: 0 },
+      clearanceIntersections: 0,
+    });
+    const view = world.landscape.cameraViews[0];
+    expect(view).toBeDefined();
+    const activeFrame = runtime.frameLandscape(view?.id ?? 'missing');
+    expect(activeFrame).toMatchObject({
+      viewId: view?.id,
+      roadIds: view?.roadIds,
+      clearanceIntersections: 0,
+    });
+    expect(runtime.camera.position.toArray()).toEqual(view?.position);
+    expect(runtime.metrics.world.landscape?.activeFrame).toEqual(activeFrame);
+    expect(runtime.metrics.world.debug.plantingLabelCount).toBe(10);
+    runtime.dispose();
+  });
+
+  it('suppresses landscape updates while hidden and resets capture state without resetting the clock', () => {
+    const renderer = createRenderer();
+    const viewport = createViewport();
+    const world = worldBuild();
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => world));
+    const callback = renderer.setAnimationLoop.mock.calls[0]?.[0];
+    callback?.(1_000);
+    const elapsedBeforeReset = runtime.metrics.frame.elapsedSeconds;
+
+    runtime.setLandscapeCaptureTime(7);
+    runtime.resetLandscape();
+    expect(world.landscape.setCaptureTime).toHaveBeenCalledWith(7);
+    expect(world.landscape.reset).toHaveBeenCalledTimes(1);
+    expect(runtime.metrics.frame.elapsedSeconds).toBe(elapsedBeforeReset);
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    callback?.(2_000);
+    expect(world.landscape.update).toHaveBeenCalledTimes(1);
+    runtime.dispose();
+    expect(world.landscape.reset).toHaveBeenCalledTimes(2);
+  });
+
+  it('rebuilds settings transactionally while preserving the camera and rolling back failures', () => {
+    const renderer = createRenderer();
+    const viewport = createViewport();
+    const initial = worldBuild();
+    const low = worldBuild(Object.freeze({ density: 'low', motion: 'standard' }));
+    let buildCount = 0;
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, (_resources, _group, settings) => {
+      buildCount += 1;
+      if (buildCount === 1) return initial;
+      if (buildCount === 2) {
+        expect(settings).toEqual({ density: 'low', motion: 'standard' });
+        return low;
+      }
+      throw new Error('settings rebuild failed');
+    }));
+    runtime.camera.position.set(12, 34, 56);
+
+    runtime.rebuildScene(Object.freeze({ density: 'low', motion: 'standard' }));
+    expect(runtime.camera.position.toArray()).toEqual([12, 34, 56]);
+    expect(runtime.worldBuildResult).toBe(low);
+    expect(runtime.metrics.world.landscape?.settings).toEqual({ density: 'low', motion: 'standard' });
+
+    expect(() => runtime.rebuildScene(Object.freeze({ density: 'medium', motion: 'reduced' }))).toThrow('settings rebuild failed');
+    expect(runtime.camera.position.toArray()).toEqual([12, 34, 56]);
+    expect(runtime.worldBuildResult).toBe(low);
+    expect(runtime.metrics.world.landscape?.settings).toEqual({ density: 'low', motion: 'standard' });
+    runtime.dispose();
   });
 
   it('disposes a healthy runtime exactly once', () => {

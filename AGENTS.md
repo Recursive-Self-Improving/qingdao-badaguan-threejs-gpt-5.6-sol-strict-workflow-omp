@@ -12,3 +12,9 @@
 - Playwright output cleaning can hide canvas captures; promote UI-hidden captures to durable artifacts before running other evidence checks.
 - Production screenshots may retain normal shell UI, but must not expose debug or architecture labels.
 - Keep CSP source tokens browser-valid; do not use an IPv6 wildcard port token.
+- Use opaque, depth-writing instanced foliage when sorting matters; it gives deterministic depth ordering without transparent blending artifacts.
+- Derive exact identity maps from source data and preserve side semantics explicitly; never infer identity or side from draw order or geometry.
+- Keep vegetation checksums lazy, publish DEV metrics at 10 Hz, and make a forced metrics command synchronously publish the current snapshot before returning.
+- Define camera fixtures in authored world space and pair visual captures with stable evidence hashes so camera regressions remain reproducible.
+- When reducing Low density, preserve category and identity anchor instances so authored composition and semantic verification remain stable.
+- Keep identity-bearing palettes separate from nonidentity scale variation: palette can encode species or category identity, while size changes remain visual-only.

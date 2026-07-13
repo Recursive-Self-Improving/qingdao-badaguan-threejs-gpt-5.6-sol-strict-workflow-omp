@@ -16,6 +16,9 @@ import type {
   ArchitectureFrameView,
   ArchitectureSubjectId,
   Bounds2,
+  LandscapeBuildMetrics,
+  LandscapeCameraView,
+  LandscapeSettings,
   NavigationResult,
   RouteAnchor,
   Vec2,
@@ -24,6 +27,10 @@ import type {
 } from '../world/types';
 
 const WORLD_RESOURCE_GROUP_PREFIX = 'world';
+const DEFAULT_LANDSCAPE_SETTINGS: LandscapeSettings = Object.freeze({
+  density: 'high',
+  motion: 'standard',
+});
 
 export interface ThreeRuntimeFrame {
   readonly deltaSeconds: number;
@@ -33,6 +40,7 @@ export interface ThreeRuntimeFrame {
 export interface ThreeRuntimeOptions {
   readonly onUpdate?: (frame: ThreeRuntimeFrame) => void;
   readonly onRender?: (runtime: ThreeRuntime) => void;
+  readonly landscapeSettings?: LandscapeSettings;
 }
 
 export interface ThreeRuntimeMetrics {
@@ -70,6 +78,16 @@ export interface ActiveArchitectureFrame {
   readonly rendererTriangles: number;
 }
 
+export interface ActiveLandscapeFrame {
+  readonly viewId: string;
+  readonly roadIds: LandscapeCameraView['roadIds'];
+  readonly position: LandscapeCameraView['position'];
+  readonly target: LandscapeCameraView['target'];
+  readonly clearanceIntersections: number;
+  readonly rendererCalls: number;
+  readonly rendererTriangles: number;
+}
+
 export interface WorldRuntimeMetrics {
   readonly roads: {
     readonly count: number;
@@ -88,10 +106,7 @@ export interface WorldRuntimeMetrics {
     readonly id: string;
     readonly bounds: Bounds2;
     readonly setback: number;
-    readonly wallSegments: readonly {
-      readonly from: Vec2;
-      readonly to: Vec2;
-    }[];
+    readonly wallSegments: readonly { readonly from: Vec2; readonly to: Vec2 }[];
     readonly gates: readonly {
       readonly id: string;
       readonly position: Vec2;
@@ -126,6 +141,7 @@ export interface WorldRuntimeMetrics {
     readonly currentAnchorId: string | null;
     readonly roadLabelCount: number;
     readonly sightlineCount: number;
+    readonly plantingLabelCount: number;
     readonly publicGreenVisible: boolean;
     readonly lastProbe: WorldNavigationProbe | null;
     readonly activeView: WorldDebugViewName | null;
@@ -137,8 +153,13 @@ export interface WorldRuntimeMetrics {
     readonly renderInfo: { readonly calls: number; readonly triangles: number };
     readonly activeFrame: ActiveArchitectureFrame | null;
   };
+  readonly landscape?: LandscapeBuildMetrics & {
+    readonly renderInfo: { readonly calls: number; readonly triangles: number };
+    readonly activeFrame: ActiveLandscapeFrame | null;
+    readonly cameraViews: readonly LandscapeCameraView[];
+    readonly clearanceIntersections: number;
+  };
 }
-
 
 export interface WorldNavigationProbe extends NavigationResult {
   readonly start: Vec2;
@@ -163,7 +184,11 @@ export interface ThreeRuntimeDependencies {
     camera: PerspectiveCamera,
     onChange: () => void,
   ) => RuntimeViewport;
-  readonly buildWorld: (resources: ResourceRegistry, group: string) => WorldBuildResult;
+  readonly buildWorld: (
+    resources: ResourceRegistry,
+    group: string,
+    settings: LandscapeSettings,
+  ) => WorldBuildResult;
   readonly completeInitialization: () => void;
 }
 
@@ -212,17 +237,21 @@ export class ThreeRuntime {
     this.lastDeltaSeconds = frame.deltaSeconds;
     this.frameCount += 1;
     this.options.onUpdate?.(frame);
+    this.activeWorld?.landscape.update(frame);
     this.options.onRender?.(this);
     this.renderer.render(this.scene, this.camera);
     this.renderCount += 1;
-    this.publishDevelopmentMetrics();
+    this.publishDevelopmentMetrics(false, timestampMs);
   };
 
   private frameCount = 0;
   private renderCount = 0;
   private rebuildCount = 0;
+  private lastDevelopmentMetricsPublishMs = Number.NEGATIVE_INFINITY;
   private sceneGeneration = 0;
   private activeResourceGroup: string | null = null;
+  private landscapeSettings: LandscapeSettings = DEFAULT_LANDSCAPE_SETTINGS;
+  private activeLandscapeFrame: ActiveLandscapeFrame | null = null;
   private activeWorld: WorldBuildResult | null = null;
   private lastProbe: WorldNavigationProbe | null = null;
   private lastWorldMetrics: WorldRuntimeMetrics | null = null;
@@ -241,6 +270,9 @@ export class ThreeRuntime {
   ) {
     this.canvas = canvas;
     this.options = options;
+    this.landscapeSettings = Object.freeze({
+      ...(options.landscapeSettings ?? DEFAULT_LANDSCAPE_SETTINGS),
+    });
     this.dependencies = dependencies === undefined
       ? DEFAULT_DEPENDENCIES
       : { ...DEFAULT_DEPENDENCIES, ...dependencies };
@@ -339,12 +371,13 @@ export class ThreeRuntime {
     };
   }
 
-  rebuildScene(): void {
+  rebuildScene(nextSettings: LandscapeSettings = this.landscapeSettings): void {
     if (this.disposed) return;
+    const stagedSettings = Object.freeze({ ...nextSettings });
     const nextGroup = this.resourceGroup(this.sceneGeneration + 1);
     let nextWorld: WorldBuildResult;
     try {
-      nextWorld = this.dependencies.buildWorld(this.resources, nextGroup);
+      nextWorld = this.dependencies.buildWorld(this.resources, nextGroup, stagedSettings);
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
@@ -376,6 +409,7 @@ export class ThreeRuntime {
 
     this.activeResourceGroup = nextGroup;
     this.activeWorld = nextWorld;
+    this.landscapeSettings = stagedSettings;
     this.resetDevelopmentFraming(nextWorld);
     this.sceneGeneration += 1;
     this.rebuildCount += 1;
@@ -389,9 +423,50 @@ export class ThreeRuntime {
     }
   }
 
+  resetLandscape(): void {
+    if (!import.meta.env.DEV || this.disposed) return;
+    this.activeWorld?.landscape.reset();
+    this.activeLandscapeFrame = null;
+    this.publishDevelopmentMetrics();
+  }
+
+  setLandscapeCaptureTime(time: number | null): void {
+    if (!import.meta.env.DEV || this.disposed) return;
+    this.activeWorld?.landscape.setCaptureTime(time);
+    this.publishDevelopmentMetrics();
+  }
+
+  frameLandscape(viewId: string): ActiveLandscapeFrame | null {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
+    const view = this.activeWorld.landscape.cameraViews.find((candidate) => candidate.id === viewId);
+    if (view === undefined || view.ySemantics !== 'world') return null;
+    this.activeWorld.debug.setVisible(false);
+    this.activeWorld.debug.setView(null);
+    this.activeArchitectureFrame = null;
+    this.lastProbe = null;
+    this.camera.position.set(...view.position);
+    this.camera.lookAt(...view.target);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
+    const renderer = this.rendererMetrics();
+    this.activeLandscapeFrame = Object.freeze({
+      viewId: view.id,
+      roadIds: view.roadIds,
+      position: view.position,
+      target: view.target,
+      clearanceIntersections: view.clearanceIntersections,
+      rendererCalls: renderer.calls,
+      rendererTriangles: renderer.triangles,
+    });
+    this.publishDevelopmentMetrics();
+    return this.activeLandscapeFrame;
+  }
+
   setWorldDebugVisible(visible: boolean): void {
     if (!import.meta.env.DEV || this.disposed) return;
     this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
     this.activeWorld?.debug.setVisible(visible);
     if (!visible) this.activeWorld?.debug.setView(null);
     this.publishDevelopmentMetrics();
@@ -399,6 +474,7 @@ export class ThreeRuntime {
 
   frameArchitecture(subjectId: string, view: ArchitectureFrameView): ActiveArchitectureFrame | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
+    this.activeLandscapeFrame = null;
     if (!Object.prototype.hasOwnProperty.call(this.activeWorld.architecture.cameraViews, subjectId)) return null;
     const typedSubjectId = subjectId as ArchitectureSubjectId;
     const subjectViews = this.activeWorld.architecture.cameraViews[typedSubjectId];
@@ -441,6 +517,7 @@ export class ThreeRuntime {
   visitWorldAnchor(anchorId: string): RouteAnchor | null {
     if (!import.meta.env.DEV || this.disposed) return null;
     this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
     const anchor = this.activeWorld?.debug.visitAnchor(anchorId) ?? null;
     this.activeWorld?.debug.setView(null);
     if (anchor !== null) this.moveCameraTo(anchor.position);
@@ -451,6 +528,7 @@ export class ThreeRuntime {
   probeWorldNavigation(requested: Vec2, radius?: number, from?: Vec2): WorldNavigationProbe | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
     this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
     const validFrom = from !== undefined
       && Number.isFinite(from.x)
       && Number.isFinite(from.z);
@@ -471,9 +549,10 @@ export class ThreeRuntime {
   frameWorldDebugView(name: WorldDebugViewName): void {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return;
     this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
     const { data, debug, navigation } = this.activeWorld;
     debug.setVisible(true);
-    if (name === 'grid') {
+    if (name === 'grid' || name === 'planting') {
       const bounds = data.worldBounds;
       const x = (bounds.minX + bounds.maxX) / 2;
       const z = (bounds.minZ + bounds.maxZ) / 2;
@@ -521,7 +600,7 @@ export class ThreeRuntime {
   private installWorld(): void {
     const group = this.resourceGroup(this.sceneGeneration);
     try {
-      const world = this.dependencies.buildWorld(this.resources, group);
+      const world = this.dependencies.buildWorld(this.resources, group, this.landscapeSettings);
       this.scene.add(world.root);
       this.activeWorld = world;
       const spawn = world.navigation.spawn;
@@ -558,7 +637,9 @@ export class ThreeRuntime {
     this.runCleanupStage(errors, () => this.viewport.dispose());
     this.runCleanupStage(errors, () => this.clock.dispose());
     this.runCleanupStage(errors, () => this.activeWorld?.debug.setView(null));
+    this.runCleanupStage(errors, () => this.activeWorld?.landscape.reset());
     this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
     this.runCleanupStage(errors, () => {
       this.lastWorldMetrics = this.worldMetrics();
     });
@@ -605,9 +686,10 @@ export class ThreeRuntime {
   private worldMetrics(): WorldRuntimeMetrics {
     const world = this.activeWorld;
     if (world === null) throw new Error('World metrics requested without an active world.');
-    const { data, debug, navigation, architecture } = world;
+    const { data, debug, navigation, architecture, landscape } = world;
     const transverseCount = data.roads.filter((road) => road.orientation === 'east-west').length;
     const longitudinalCount = data.roads.length - transverseCount;
+    const landscapeMetrics = landscape.metrics;
     return {
       roads: {
         count: data.roads.length,
@@ -658,6 +740,7 @@ export class ThreeRuntime {
         currentAnchorId: debug.currentAnchorId,
         roadLabelCount: debug.roadLabelCount,
         sightlineCount: debug.sightlineCount,
+        plantingLabelCount: debug.plantingLabelCount,
         publicGreenVisible: debug.publicGreenVisible,
         lastProbe: this.lastProbe,
         activeView: debug.currentView,
@@ -670,6 +753,13 @@ export class ThreeRuntime {
           renderInfo: this.rendererMetrics(),
           activeFrame: this.activeArchitectureFrame,
         },
+        landscape: {
+          ...landscapeMetrics,
+          renderInfo: this.rendererMetrics(),
+          activeFrame: this.activeLandscapeFrame,
+          cameraViews: landscape.cameraViews,
+          clearanceIntersections: landscapeMetrics.clearanceIntersections,
+        },
       } : {}),
     };
   }
@@ -677,6 +767,7 @@ export class ThreeRuntime {
   private resetDevelopmentFraming(world: WorldBuildResult): void {
     this.lastProbe = null;
     this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
     world.debug.setView(null);
     world.debug.setVisible(false);
   }
@@ -704,9 +795,10 @@ export class ThreeRuntime {
     this.loopRunning = shouldRun;
   }
 
-  private publishDevelopmentMetrics(): void {
-    if (import.meta.env.DEV && !this.disposed && this.countedAsCreated) {
-      this.canvas.dataset.threeRuntimeMetrics = JSON.stringify(this.metrics);
-    }
+  private publishDevelopmentMetrics(force = true, timestampMs = performance.now()): void {
+    if (!import.meta.env.DEV || this.disposed || !this.countedAsCreated) return;
+    if (!force && timestampMs - this.lastDevelopmentMetricsPublishMs < 100) return;
+    this.lastDevelopmentMetricsPublishMs = timestampMs;
+    this.canvas.dataset.threeRuntimeMetrics = JSON.stringify(this.metrics);
   }
 }

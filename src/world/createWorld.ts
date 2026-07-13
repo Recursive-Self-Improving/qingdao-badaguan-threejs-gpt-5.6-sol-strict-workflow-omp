@@ -8,10 +8,19 @@ import { createWorldDebug } from './debug/createWorldDebug';
 import { createVillaKit } from './architecture/villaKit';
 import { createVillaDistrict } from './architecture/createVillas';
 import { createLandmarks } from './architecture/createLandmarks';
-import type { WorldBuildResult } from './types';
+import { createLandscape } from './landscape/createLandscape';
+import type { LandscapeSettings, WorldBuildResult } from './types';
+const DEFAULT_LANDSCAPE_SETTINGS: LandscapeSettings = Object.freeze({
+  density: 'high',
+  motion: 'standard',
+});
 
 
-export function createWorld(resources: ResourceRegistry, group: string): WorldBuildResult {
+export function createWorld(
+  resources: ResourceRegistry,
+  group: string,
+  settings: LandscapeSettings = DEFAULT_LANDSCAPE_SETTINGS,
+): WorldBuildResult {
   const root = new Group();
   root.name = 'badaguan-district';
   root.add(createTerrain(resources, group));
@@ -21,13 +30,16 @@ export function createWorld(resources: ResourceRegistry, group: string): WorldBu
   createLandmarks(villaKit, DISTRICT_DATA.architectureSites);
   const architecture = villaKit.finalize();
   root.add(architecture.root);
-  const debug = createWorldDebug(resources, group);
+  const landscape = createLandscape(resources, group, settings, DISTRICT_DATA);
+  root.add(landscape.root);
+  const debug = createWorldDebug(resources, group, landscape.debugLayout);
   root.add(debug.root);
   return Object.freeze({
     root,
     data: DISTRICT_DATA,
     debug,
     architecture,
+    landscape,
     navigation: Object.freeze({
       resolve: resolveNavigation,
       sampleGroundHeight,

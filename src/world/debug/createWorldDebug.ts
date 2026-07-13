@@ -24,10 +24,14 @@ import type { ResourceRegistry } from '../../render/ResourceRegistry';
 import { DISTRICT_DATA, ROAD_SPECS, ROUTE_ANCHORS } from '../districtData';
 import type {
   Bounds2,
+  LandscapeDebugLayout,
+  PlantingZone,
+  RoadId,
   RoadSpec,
   RouteAnchor,
   SightlineSpec,
   Vec2,
+  VegetationSpecies,
   WorldDebugController,
   WorldDebugViewName,
 } from '../types';
@@ -36,6 +40,33 @@ const DEBUG_LINE_SAMPLE_SPACING = 8;
 const DEBUG_SURFACE_OFFSET = 0.28;
 const ROUTE_LINE_OFFSET = 0.55;
 const SIGHTLINE_OFFSET = 0.8;
+const PLANTING_CORRIDOR_OFFSET = 0.96;
+const PLANTING_MARKER_RADIUS = 2.4;
+const PLANTING_ENDPOINT_GLYPH_CANVAS_SIZE = 128;
+const PLANTING_ENDPOINT_GLYPH_TARGET_SIZE_PX = 40;
+const PLANTING_ENDPOINT_GLYPH_RENDER_ORDER = 1_300;
+const PLANTING_LEADER_KEYLINE_HALF_WIDTH = 3.5;
+const PLANTING_LEADER_STROKE_HALF_WIDTH = 1.4;
+const PLANTING_LEADER_RENDER_ORDER_BASE = 1_140;
+const PLANTING_LEADER_RENDER_ORDER_STRIDE = 3;
+const PLANTING_BADGE_MIN_TEXT_SIZE_PX = 16;
+const PLANTING_LABEL_BADGE_SIZE = 96;
+const PLANTING_LABEL_BADGE_FONT_SIZE = 70;
+const PLANTING_ENDPOINT_BADGE_CANVAS_SIZE = 96;
+const PLANTING_ENDPOINT_BADGE_TARGET_SIZE_PX = 30;
+const PLANTING_ENDPOINT_BADGE_FONT_SIZE = 72;
+const PLANTING_ENDPOINT_BADGE_RENDER_ORDER = 1_310;
+const PLANTING_RIGHT_TRACK_OUTSET = 18;
+const PLANTING_RIGHT_TRACK_SPACING = 42;
+const PLANTING_RIGHT_TRACK_MIN_SCREEN_SPACING_PX = 24;
+const PLANTING_JIAYUGUAN_LATERAL_DETOUR = 30;
+const PLANTING_JIAYUGUAN_SOUTH_DETOUR = 12;
+const PLANTING_LABEL_APPROACH_OUTSET = 20;
+const PLANTING_LABEL_ALTITUDE = 11;
+const PLANTING_LABEL_COLUMN_OUTSET = 150;
+const PLANTING_LABEL_NORTH_INSET = 50;
+const PLANTING_LABEL_SOUTH_INSET = 10;
+const PLANTING_LABEL_ROWS_PER_COLUMN = 5;
 const LABEL_CANVAS_WIDTH = 768;
 const LABEL_CANVAS_HEIGHT = 144;
 const EVIDENCE_CAPTURE_WIDTH_PX = 1246;
@@ -43,6 +74,10 @@ const EVIDENCE_CAPTURE_HEIGHT_PX = 552;
 const LABEL_SCREEN_SCALE_PER_PIXEL = (
   2 * Math.tan((APP_CONFIG.camera.fov * Math.PI) / 360)
 ) / EVIDENCE_CAPTURE_HEIGHT_PX;
+const PLANTING_ENDPOINT_GLYPH_SCREEN_SIZE = PLANTING_ENDPOINT_GLYPH_TARGET_SIZE_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const PLANTING_ENDPOINT_BADGE_SCREEN_SIZE = PLANTING_ENDPOINT_BADGE_TARGET_SIZE_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
 const STATIC_LABEL_COLLISION_GAP_PX = 6;
 const STATIC_LABEL_GEOMETRY_CLEARANCE_PX = 8;
 const STATIC_LABEL_MIN_TEXT_HEIGHT_PX = 12;
@@ -56,6 +91,12 @@ const ROAD_LABEL_OUTER_NORTH_OFFSET = -70;
 const ROAD_LABEL_CENTER_NORTH_OFFSET = -30;
 const ROAD_LABEL_LEADER_BOUNDARY_GAP = 6;
 const ROAD_LABEL_TOP_ROW_OFFSET = 5;
+const PLANTING_LABEL_TARGET_WIDTH_PX = 304;
+const PLANTING_LABEL_TARGET_HEIGHT_PX = 40;
+const PLANTING_LABEL_SCREEN_WIDTH = PLANTING_LABEL_TARGET_WIDTH_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
+const PLANTING_LABEL_SCREEN_HEIGHT = PLANTING_LABEL_TARGET_HEIGHT_PX
+  * LABEL_SCREEN_SCALE_PER_PIXEL;
 const STRUCTURE_LABEL_TARGET_WIDTH_PX = 170;
 const STRUCTURE_LABEL_TARGET_HEIGHT_PX = 34;
 const STRUCTURE_LABEL_SCREEN_WIDTH = STRUCTURE_LABEL_TARGET_WIDTH_PX * LABEL_SCREEN_SCALE_PER_PIXEL;
@@ -103,6 +144,7 @@ const PUBLIC_ACCESS_ARROW_LENGTH = 1.6;
 const PUBLIC_ACCESS_ARROW_WIDTH = 1;
 const FULL_GRID_OPACITY = 0.94;
 const SIGHTLINE_GRID_OPACITY = 0.34;
+const PLANTING_GRID_OPACITY = 0.46;
 const STRUCTURE_LABEL_ALTITUDE = 10;
 const SIGHTLINE_RIBBON_OFFSET = 0.68;
 const SIGHTLINE_CORRIDOR_HALF_WIDTH = 4;
@@ -181,6 +223,9 @@ const COLORS = {
   sightlineUphill: 0xe6b562,
   sightlineGreen: 0x82c889,
   sightlineCoast: 0x71b8c9,
+  planting: 0xa8c86f,
+  plantingLeaderKeyline: 0x0f1511,
+  plantingLeaderHighlight: 0xd9f07a,
   grade: 0xaec7c1,
   marker: 0xf0e3a6,
   activeMarker: 0xf2c45f,
@@ -206,6 +251,7 @@ interface DebugLineMaterials {
   readonly marker: LineBasicMaterial;
   readonly activeMarker: LineBasicMaterial;
   readonly sightlines: Readonly<Record<SightlineSpec['theme'], LineBasicMaterial>>;
+  readonly planting: LineBasicMaterial;
 }
 
 interface DebugRibbonMaterials {
@@ -222,6 +268,7 @@ interface DebugViewLayers {
   readonly overview: Group;
   readonly publicGreen: Group;
   readonly sightlines: Group;
+  readonly planting: Group;
 }
 
 interface DebugLabelSpec {
@@ -233,6 +280,7 @@ interface DebugLabelSpec {
   readonly screenHeight: number;
   readonly borderColor: number;
   readonly fontSize?: number;
+  readonly badgeText?: string;
 }
 
 const SIGHTLINE_LABEL_CONFIG = {
@@ -700,6 +748,7 @@ function createDebugLineMaterials(resources: ResourceRegistry, group: string): D
       green: registerLineMaterial(resources, group, COLORS.sightlineGreen),
       coast: registerLineMaterial(resources, group, COLORS.sightlineCoast),
     },
+    planting: registerLineMaterial(resources, group, COLORS.planting),
   };
 }
 
@@ -748,15 +797,48 @@ function createDebugLabel(
   context.strokeStyle = cssColor(spec.borderColor);
   context.lineWidth = 6;
   context.strokeRect(7, 7, LABEL_CANVAS_WIDTH - 14, LABEL_CANVAS_HEIGHT - 14);
-  context.fillStyle = cssColor(COLORS.labelText);
-  context.font = `800 ${spec.fontSize ?? 72}px "Arial Narrow", "Liberation Sans Narrow", "Aptos", sans-serif`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
+  let textCenterX = LABEL_CANVAS_WIDTH * 0.5;
+  let textMaximumWidth = LABEL_CANVAS_WIDTH - 58;
+  if (spec.badgeText !== undefined) {
+    const badgeLeft = 20;
+    const badgeTop = (LABEL_CANVAS_HEIGHT - PLANTING_LABEL_BADGE_SIZE) * 0.5;
+    context.fillStyle = cssColor(COLORS.plantingLeaderHighlight);
+    context.fillRect(
+      badgeLeft,
+      badgeTop,
+      PLANTING_LABEL_BADGE_SIZE,
+      PLANTING_LABEL_BADGE_SIZE,
+    );
+    context.strokeStyle = cssColor(COLORS.labelText);
+    context.lineWidth = 5;
+    context.strokeRect(
+      badgeLeft + 2.5,
+      badgeTop + 2.5,
+      PLANTING_LABEL_BADGE_SIZE - 5,
+      PLANTING_LABEL_BADGE_SIZE - 5,
+    );
+    context.fillStyle = cssColor(COLORS.plantingLeaderKeyline);
+    context.font = `800 ${PLANTING_LABEL_BADGE_FONT_SIZE}px "DejaVu Sans Mono", "Liberation Mono", monospace`;
+    context.fillText(
+      spec.badgeText,
+      badgeLeft + PLANTING_LABEL_BADGE_SIZE * 0.5,
+      LABEL_CANVAS_HEIGHT * 0.52,
+      PLANTING_LABEL_BADGE_SIZE - 12,
+    );
+    const textLeft = badgeLeft + PLANTING_LABEL_BADGE_SIZE + 18;
+    const textRight = LABEL_CANVAS_WIDTH - 29;
+    textCenterX = (textLeft + textRight) * 0.5;
+    textMaximumWidth = textRight - textLeft;
+  }
+  context.fillStyle = cssColor(COLORS.labelText);
+  context.font = `800 ${spec.fontSize ?? 72}px "Arial Narrow", "Liberation Sans Narrow", "Aptos", sans-serif`;
   context.fillText(
     spec.text,
-    LABEL_CANVAS_WIDTH * 0.5,
+    textCenterX,
     LABEL_CANVAS_HEIGHT * 0.52,
-    LABEL_CANVAS_WIDTH - 58,
+    textMaximumWidth,
   );
 
   const texture = resources.register(new CanvasTexture(canvas), group);
@@ -781,6 +863,134 @@ function createDebugLabel(
   label.scale.set(spec.screenWidth, spec.screenHeight, 1);
   label.renderOrder = 1_200;
   return label;
+}
+
+function createPlantingEndpointMaterial(
+  resources: ResourceRegistry,
+  group: string,
+): SpriteMaterial {
+  const canvas = document.createElement('canvas');
+  canvas.width = PLANTING_ENDPOINT_GLYPH_CANVAS_SIZE;
+  canvas.height = PLANTING_ENDPOINT_GLYPH_CANVAS_SIZE;
+  const context = canvas.getContext('2d');
+  if (context === null) throw new Error('Planting endpoint glyphs require a 2D canvas context.');
+
+  const center = PLANTING_ENDPOINT_GLYPH_CANVAS_SIZE * 0.5;
+  context.clearRect(0, 0, PLANTING_ENDPOINT_GLYPH_CANVAS_SIZE, PLANTING_ENDPOINT_GLYPH_CANVAS_SIZE);
+  context.lineCap = 'round';
+  context.strokeStyle = cssColor(COLORS.labelBackground);
+  context.lineWidth = 24;
+  context.beginPath();
+  context.arc(center, center, 43, 0, Math.PI * 2);
+  context.stroke();
+  context.strokeStyle = cssColor(COLORS.activeMarker);
+  context.lineWidth = 12;
+  context.beginPath();
+  context.arc(center, center, 43, 0, Math.PI * 2);
+  context.stroke();
+  context.fillStyle = cssColor(COLORS.labelBackground);
+  context.beginPath();
+  context.arc(center, center, 18, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = cssColor(COLORS.labelText);
+  context.beginPath();
+  context.arc(center, center, 9, 0, Math.PI * 2);
+  context.fill();
+
+  const texture = resources.register(new CanvasTexture(canvas), group);
+  texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return resources.register(new SpriteMaterial({
+    map: texture,
+    color: new Color(COLORS.labelTextureTint),
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    sizeAttenuation: false,
+    toneMapped: false,
+  }), group);
+}
+
+
+function createPlantingEndpointGlyph(
+  entry: PlantingDebugEntry,
+  material: SpriteMaterial,
+): Sprite {
+  const glyph = new Sprite(material);
+  glyph.name = `debug:planting-endpoint:${entry.roadId}:${entry.speciesId}`;
+  glyph.position.set(
+    entry.marker.x,
+    sampleGroundHeight(entry.marker.x, entry.marker.z) + PLANTING_CORRIDOR_OFFSET + 0.18,
+    entry.marker.z,
+  );
+  glyph.scale.set(
+    PLANTING_ENDPOINT_GLYPH_SCREEN_SIZE,
+    PLANTING_ENDPOINT_GLYPH_SCREEN_SIZE,
+    1,
+  );
+  glyph.renderOrder = PLANTING_ENDPOINT_GLYPH_RENDER_ORDER;
+  return glyph;
+}
+
+function createPlantingEndpointBadgeMaterial(
+  resources: ResourceRegistry,
+  group: string,
+  badgeText: string,
+): SpriteMaterial {
+  const canvas = document.createElement('canvas');
+  canvas.width = PLANTING_ENDPOINT_BADGE_CANVAS_SIZE;
+  canvas.height = PLANTING_ENDPOINT_BADGE_CANVAS_SIZE;
+  const context = canvas.getContext('2d');
+  if (context === null) throw new Error('Planting endpoint badges require a 2D canvas context.');
+
+  const center = PLANTING_ENDPOINT_BADGE_CANVAS_SIZE * 0.5;
+  context.clearRect(0, 0, PLANTING_ENDPOINT_BADGE_CANVAS_SIZE, PLANTING_ENDPOINT_BADGE_CANVAS_SIZE);
+  context.fillStyle = cssColor(COLORS.plantingLeaderKeyline);
+  context.beginPath();
+  context.arc(center, center, center - 3, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = cssColor(COLORS.plantingLeaderHighlight);
+  context.lineWidth = 8;
+  context.stroke();
+  context.fillStyle = cssColor(COLORS.labelText);
+  context.font = `800 ${PLANTING_ENDPOINT_BADGE_FONT_SIZE}px "DejaVu Sans Mono", "Liberation Mono", monospace`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(badgeText, center, center + 2, PLANTING_ENDPOINT_BADGE_CANVAS_SIZE - 16);
+
+  const texture = resources.register(new CanvasTexture(canvas), group);
+  texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return resources.register(new SpriteMaterial({
+    map: texture,
+    color: new Color(COLORS.labelTextureTint),
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    sizeAttenuation: false,
+    toneMapped: false,
+  }), group);
+}
+
+function createPlantingEndpointBadge(
+  entry: PlantingDebugEntry,
+  badgeText: string,
+  material: SpriteMaterial,
+): Sprite {
+  const badge = new Sprite(material);
+  badge.name = `debug:planting-endpoint-badge:${entry.roadId}:${badgeText}`;
+  badge.position.set(
+    entry.marker.x,
+    sampleGroundHeight(entry.marker.x, entry.marker.z) + PLANTING_CORRIDOR_OFFSET + 0.2,
+    entry.marker.z,
+  );
+  badge.scale.set(
+    PLANTING_ENDPOINT_BADGE_SCREEN_SIZE,
+    PLANTING_ENDPOINT_BADGE_SCREEN_SIZE,
+    1,
+  );
+  badge.renderOrder = PLANTING_ENDPOINT_BADGE_RENDER_ORDER;
+  return badge;
 }
 type StaticCaptureViewName = Exclude<WorldDebugViewName, 'grid'>;
 
@@ -827,6 +1037,13 @@ function createStaticCaptureCamera(view: StaticCaptureViewName): PerspectiveCame
     const z = (bounds.minZ + bounds.maxZ) * 0.5;
     const groundHeight = sampleGroundHeight(x, z);
     camera.position.set(x, groundHeight + 125, z);
+    camera.lookAt(x, groundHeight, z);
+  } else if (view === 'planting') {
+    const bounds = DISTRICT_DATA.worldBounds;
+    const x = (bounds.minX + bounds.maxX) * 0.5;
+    const z = (bounds.minZ + bounds.maxZ) * 0.5;
+    const groundHeight = sampleGroundHeight(x, z);
+    camera.position.set(x, groundHeight + 430, z);
     camera.lookAt(x, groundHeight, z);
   } else {
     const bounds = DISTRICT_DATA.worldBounds;
@@ -932,6 +1149,243 @@ function assertStaticCaptureLabelLayout(
         throw new Error(
           `Static ${view} label ${label.name} occludes ${geometry.name} at 1246x552.`,
         );
+      }
+    }
+  }
+}
+
+function assertPlantingLeaderLaneSpacing(): void {
+  const camera = createStaticCaptureCamera('planting');
+  const centerZ = (DISTRICT_DATA.worldBounds.minZ + DISTRICT_DATA.worldBounds.maxZ) * 0.5;
+  const worldPosition = new Vector3();
+  let previousScreenX: number | null = null;
+  for (const laneIndex of [0, 1, 2, 3]) {
+    const trackX = plantingRightTrackX(laneIndex);
+    worldPosition.set(
+      trackX,
+      sampleGroundHeight(trackX, centerZ) + PLANTING_CORRIDOR_OFFSET,
+      centerZ,
+    ).project(camera);
+    const screenX = ((worldPosition.x + 1) * EVIDENCE_CAPTURE_WIDTH_PX) * 0.5;
+    if (previousScreenX !== null
+      && screenX - previousScreenX < PLANTING_RIGHT_TRACK_MIN_SCREEN_SPACING_PX) {
+      throw new Error(
+        `Planting leader lanes must remain at least ${PLANTING_RIGHT_TRACK_MIN_SCREEN_SPACING_PX}px apart.`,
+      );
+    }
+    previousScreenX = screenX;
+  }
+  const rightLabelX = plantingLabelPosition(PLANTING_LABEL_ROWS_PER_COLUMN).x;
+  if (plantingRightTrackX(3) >= rightLabelX) {
+    throw new Error('Planting leader lanes must retain independent horizontal label lead-ins.');
+  }
+}
+
+
+interface PlantingDebugEntry {
+  readonly roadId: RoadId;
+  readonly roadName: string;
+  readonly speciesId: VegetationSpecies;
+  readonly speciesLabel: string;
+  readonly marker: Vec2;
+  readonly zone: PlantingZone;
+}
+
+function plantingSpeciesLabel(species: VegetationSpecies): string {
+  switch (species) {
+    case 'peach': return 'Peach';
+    case 'crabapple': return 'Crabapple';
+    case 'cedar': return 'Cedar';
+    case 'crape-myrtle': return 'Crape myrtle';
+    case 'maple': return 'Maple';
+    case 'ginkgo': return 'Ginkgo';
+    case 'chinese-juniper': return 'Chinese juniper';
+    case 'plane-tree': return 'Plane tree';
+  }
+}
+
+function assertFinitePlantingPoint(point: Vec2, name: string): void {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.z)) {
+    throw new Error(`Planting debug ${name} must contain finite coordinates.`);
+  }
+}
+
+function sameBounds(first: Bounds2, second: Bounds2): boolean {
+  return first.minX === second.minX && first.maxX === second.maxX
+    && first.minZ === second.minZ && first.maxZ === second.maxZ;
+}
+
+function boundsContainPoint(bounds: Bounds2, point: Vec2): boolean {
+  return point.x >= bounds.minX && point.x <= bounds.maxX
+    && point.z >= bounds.minZ && point.z <= bounds.maxZ;
+}
+
+function assertPlantingDebugLayout(layout: LandscapeDebugLayout): readonly PlantingDebugEntry[] {
+  if (layout.markers.length !== ROAD_SPECS.length || layout.zones.length !== ROAD_SPECS.length) {
+    throw new Error(
+      `Planting debug layout must contain exactly ${ROAD_SPECS.length} road markers and corridors.`,
+    );
+  }
+  const markersByRoadId = new Map<string, LandscapeDebugLayout['markers'][number]>();
+  for (const marker of layout.markers) {
+    if (markersByRoadId.has(marker.roadId)) {
+      throw new Error(`Planting debug layout repeats marker identity ${marker.roadId}.`);
+    }
+    markersByRoadId.set(marker.roadId, marker);
+  }
+  const zonesByRoadId = new Map<string, PlantingZone>();
+  for (const zone of layout.zones) {
+    if (zonesByRoadId.has(zone.roadId)) {
+      throw new Error(`Planting debug layout repeats corridor identity ${zone.roadId}.`);
+    }
+    zonesByRoadId.set(zone.roadId, zone);
+  }
+
+  return ROAD_SPECS.map((road) => {
+    const marker = markersByRoadId.get(road.id);
+    const zone = zonesByRoadId.get(road.id);
+    const cue = DISTRICT_DATA.roadPlantingCues.find(({ roadId }) => roadId === road.id);
+    const canonicalZone = DISTRICT_DATA.plantingZones.find(({ roadId }) => roadId === road.id);
+    if (marker === undefined || zone === undefined || cue === undefined || canonicalZone === undefined) {
+      throw new Error(`Planting debug layout is missing the canonical identity for ${road.id}.`);
+    }
+    if (marker.speciesId !== cue.species || zone.id !== canonicalZone.id
+      || !sameBounds(zone.bounds, canonicalZone.bounds)) {
+      throw new Error(`Planting debug identity ${road.id} does not match its canonical road/species cue.`);
+    }
+    assertFinitePlantingPoint(marker.position, `${road.id} marker`);
+    assertFinitePlantingPoint({ x: zone.bounds.minX, z: zone.bounds.minZ }, `${road.id} corridor`);
+    assertFinitePlantingPoint({ x: zone.bounds.maxX, z: zone.bounds.maxZ }, `${road.id} corridor`);
+    if (zone.bounds.minX >= zone.bounds.maxX || zone.bounds.minZ >= zone.bounds.maxZ) {
+      throw new Error(`Planting debug corridor ${road.id} must have positive area.`);
+    }
+    if (!boundsContainPoint(zone.bounds, marker.position)) {
+      throw new Error(`Planting debug marker ${road.id} must fall inside its authored corridor.`);
+    }
+    return {
+      roadId: marker.roadId,
+      roadName: road.name,
+      speciesId: marker.speciesId,
+      speciesLabel: plantingSpeciesLabel(marker.speciesId),
+      marker: marker.position,
+      zone,
+    };
+  });
+}
+
+function plantingLabelPosition(index: number): Vec2 {
+  const bounds = DISTRICT_DATA.worldBounds;
+  const rightColumn = index >= PLANTING_LABEL_ROWS_PER_COLUMN;
+  const row = index % PLANTING_LABEL_ROWS_PER_COLUMN;
+  const usableDepth = bounds.maxZ - bounds.minZ
+    - PLANTING_LABEL_NORTH_INSET - PLANTING_LABEL_SOUTH_INSET;
+  return {
+    x: rightColumn
+      ? bounds.maxX + PLANTING_LABEL_COLUMN_OUTSET
+      : bounds.minX - PLANTING_LABEL_COLUMN_OUTSET,
+    z: bounds.minZ + PLANTING_LABEL_NORTH_INSET
+      + (usableDepth * row) / (PLANTING_LABEL_ROWS_PER_COLUMN - 1),
+  };
+}
+
+function createPlantingLabelSpec(entry: PlantingDebugEntry, index: number): DebugLabelSpec {
+  return {
+    name: `debug:planting-label:${entry.roadId}:${entry.speciesId}`,
+    text: `${entry.roadName.toUpperCase()} / ${entry.speciesLabel.toUpperCase()}`,
+    badgeText: String(index + 1).padStart(2, '0'),
+    position: plantingLabelPosition(index),
+    altitude: PLANTING_LABEL_ALTITUDE,
+    screenWidth: PLANTING_LABEL_SCREEN_WIDTH,
+    screenHeight: PLANTING_LABEL_SCREEN_HEIGHT,
+    borderColor: COLORS.planting,
+    fontSize: 54,
+  };
+}
+
+function assertPlantingBadgeLayout(
+  specs: readonly DebugLabelSpec[],
+  endpointBadgeCount: number,
+  badgeCodes: ReadonlySet<string>,
+): void {
+  const labelBadgeTextSize = PLANTING_LABEL_TARGET_HEIGHT_PX
+    * (PLANTING_LABEL_BADGE_FONT_SIZE / LABEL_CANVAS_HEIGHT);
+  const endpointBadgeTextSize = PLANTING_ENDPOINT_BADGE_TARGET_SIZE_PX
+    * (PLANTING_ENDPOINT_BADGE_FONT_SIZE / PLANTING_ENDPOINT_BADGE_CANVAS_SIZE);
+  if (labelBadgeTextSize < PLANTING_BADGE_MIN_TEXT_SIZE_PX
+    || endpointBadgeTextSize < PLANTING_BADGE_MIN_TEXT_SIZE_PX) {
+    throw new Error(`Planting road badges must render at least ${PLANTING_BADGE_MIN_TEXT_SIZE_PX}px text.`);
+  }
+  if (specs.length !== ROAD_SPECS.length
+    || endpointBadgeCount !== ROAD_SPECS.length
+    || badgeCodes.size !== ROAD_SPECS.length) {
+    throw new Error(`Planting debug view must create exactly ${ROAD_SPECS.length} unique label and endpoint badges.`);
+  }
+  for (let index = 0; index < ROAD_SPECS.length; index += 1) {
+    const expectedCode = String(index + 1).padStart(2, '0');
+    if (specs[index]?.badgeText !== expectedCode || !badgeCodes.has(expectedCode)) {
+      throw new Error(`Planting road badge ${expectedCode} must match its label and endpoint.`);
+    }
+  }
+}
+
+function plantingRightTrackX(index: number): number {
+  return DISTRICT_DATA.worldBounds.maxX
+    + PLANTING_RIGHT_TRACK_OUTSET
+    + index * PLANTING_RIGHT_TRACK_SPACING;
+}
+
+function plantingLeaderWaypoints(
+  entry: PlantingDebugEntry,
+  labelPosition: Vec2,
+): readonly Vec2[] | undefined {
+  const rightTrack = (index: number): readonly Vec2[] => {
+    const trackX = plantingRightTrackX(index);
+    return [
+      { x: trackX, z: entry.marker.z },
+      { x: trackX, z: labelPosition.z },
+    ];
+  };
+
+  switch (entry.roadId) {
+    case 'linhuaiguan': return rightTrack(0);
+    case 'wushengguan': return rightTrack(1);
+    case 'hangu-pass': return rightTrack(2);
+    case 'shanhaiguan': return rightTrack(3);
+    case 'jiayuguan': {
+      const detourX = entry.marker.x - PLANTING_JIAYUGUAN_LATERAL_DETOUR;
+      const detourZ = DISTRICT_DATA.worldBounds.maxZ + PLANTING_JIAYUGUAN_SOUTH_DETOUR;
+      const approachX = labelPosition.x - PLANTING_LABEL_APPROACH_OUTSET;
+      return [
+        { x: detourX, z: entry.marker.z },
+        { x: detourX, z: detourZ },
+        { x: approachX, z: detourZ },
+        { x: approachX, z: labelPosition.z },
+      ];
+    }
+    default: return undefined;
+  }
+}
+
+interface PlantingLeaderPathSpec {
+  readonly roadId: RoadId;
+  readonly vertices: readonly Vec2[];
+}
+
+function assertPlantingLeaderPathVertices(paths: readonly PlantingLeaderPathSpec[]): void {
+  for (let firstIndex = 0; firstIndex < paths.length; firstIndex += 1) {
+    const first = paths[firstIndex];
+    if (first === undefined) continue;
+    for (let secondIndex = firstIndex + 1; secondIndex < paths.length; secondIndex += 1) {
+      const second = paths[secondIndex];
+      if (second === undefined) continue;
+      for (const firstVertex of first.vertices) {
+        for (const secondVertex of second.vertices) {
+          if (firstVertex.x === secondVertex.x && firstVertex.z === secondVertex.z) {
+            throw new Error(
+              `Planting leaders ${first.roadId} and ${second.roadId} must not share path vertices.`,
+            );
+          }
+        }
       }
     }
   }
@@ -1114,6 +1568,36 @@ function appendElevatedLabelLeader(
     [labelPosition.x, labelGround + labelAltitude - 1.2, labelPosition.z],
   );
   appendCross(positions, anchor, 0.7, groundOffset + 0.03);
+}
+
+function appendPlantingLeaderRibbon(
+  positions: number[],
+  anchor: Vec2,
+  labelPosition: Vec2,
+  groundOffset: number,
+  halfWidth: number,
+  waypoints?: readonly Vec2[],
+): void {
+  let segmentFrom = anchor;
+  if (waypoints !== undefined) {
+    for (const waypoint of waypoints) {
+      appendTerrainRibbon(
+        positions,
+        segmentFrom,
+        waypoint,
+        halfWidth,
+        groundOffset,
+      );
+      segmentFrom = waypoint;
+    }
+  }
+  appendTerrainRibbon(
+    positions,
+    segmentFrom,
+    labelPosition,
+    halfWidth,
+    groundOffset,
+  );
 }
 
 function appendSightlineLabelLeader(positions: number[], sightline: SightlineSpec): void {
@@ -1307,6 +1791,7 @@ class WorldDebugControllerImplementation implements WorldDebugController {
     private readonly developmentEnabled: boolean,
     private readonly activeMarker: Object3D | null,
     readonly roadLabelCount: number,
+    readonly plantingLabelCount: number,
     readonly sightlineCount: number,
     private readonly includesPublicGreen: boolean,
     private readonly layers: DebugViewLayers | null,
@@ -1338,14 +1823,18 @@ class WorldDebugControllerImplementation implements WorldDebugController {
     if (!this.developmentEnabled || this.layers === null || this.roadGridMaterial === null) return;
     this.selectedView = view;
     const unfiltered = view === null;
-    this.layers.roadContext.visible = unfiltered || view === 'grid' || view === 'sightlines';
+    this.layers.roadContext.visible = unfiltered
+      || view === 'grid' || view === 'sightlines' || view === 'planting';
     this.layers.grid.visible = unfiltered || view === 'grid';
     this.layers.overview.visible = unfiltered;
     this.layers.publicGreen.visible = unfiltered || view === 'public-green';
     this.layers.sightlines.visible = unfiltered || view === 'sightlines';
+    this.layers.planting.visible = unfiltered || view === 'planting';
     this.roadGridMaterial.opacity = view === 'sightlines'
       ? SIGHTLINE_GRID_OPACITY
-      : FULL_GRID_OPACITY;
+      : view === 'planting'
+        ? PLANTING_GRID_OPACITY
+        : FULL_GRID_OPACITY;
   }
 
   visitAnchor(anchorId: string): RouteAnchor | null {
@@ -1368,13 +1857,14 @@ class WorldDebugControllerImplementation implements WorldDebugController {
 export function createWorldDebug(
   resources: ResourceRegistry,
   group: string,
+  plantingLayout?: LandscapeDebugLayout,
 ): WorldDebugController {
   const root = new Group();
   root.name = 'world-debug';
   root.visible = false;
 
   if (!import.meta.env.DEV) {
-    return new WorldDebugControllerImplementation(root, false, null, 0, 0, false, null, null);
+    return new WorldDebugControllerImplementation(root, false, null, 0, 0, 0, false, null, null);
   }
 
   const materials = createDebugLineMaterials(resources, group);
@@ -2182,6 +2672,197 @@ export function createWorldDebug(
     labelGroup,
   );
 
+  const plantingLayerObjectNames: string[] = [];
+  let plantingLabelCount = 0;
+  if (plantingLayout !== undefined) {
+    const plantingEntries = assertPlantingDebugLayout(plantingLayout);
+    const plantingCorridorGroup = new Group();
+    plantingCorridorGroup.name = 'debug:planting-corridors';
+    const plantingMarkerGroup = new Group();
+    plantingMarkerGroup.name = 'debug:planting-markers';
+    const plantingEndpointGroup = new Group();
+    plantingEndpointGroup.name = 'debug:planting-endpoints';
+    const plantingLeaderKeylineGroup = new Group();
+    plantingLeaderKeylineGroup.name = 'debug:planting-label-leader-keylines';
+    const plantingEndpointBadgeGroup = new Group();
+    plantingEndpointBadgeGroup.name = 'debug:planting-endpoint-badges';
+    const plantingLeaderGroup = new Group();
+    plantingLeaderGroup.name = 'debug:planting-label-leaders';
+    const plantingLabelGroup = new Group();
+    plantingLabelGroup.name = 'debug:planting-labels';
+    const plantingProjectionLabels: DebugLabelSpec[] = [];
+    const plantingEndpointMaterial = createPlantingEndpointMaterial(resources, group);
+    const plantingLeaderMaterial = resources.register(new LineBasicMaterial({
+      color: new Color(COLORS.plantingLeaderHighlight),
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    }), group);
+    const plantingLeaderKeylineMaterial = resources.register(new MeshBasicMaterial({
+      color: new Color(COLORS.plantingLeaderKeyline),
+      depthTest: false,
+      depthWrite: false,
+      side: DoubleSide,
+      toneMapped: false,
+    }), group);
+    const plantingLeaderStrokeMaterial = resources.register(new MeshBasicMaterial({
+      color: new Color(COLORS.plantingLeaderHighlight),
+      depthTest: false,
+      depthWrite: false,
+      side: DoubleSide,
+      toneMapped: false,
+    }), group);
+    const plantingLeaderPaths: PlantingLeaderPathSpec[] = [];
+    const plantingBadgeCodes = new Set<string>();
+
+    for (let index = 0; index < plantingEntries.length; index += 1) {
+      const entry = plantingEntries[index];
+      if (entry === undefined) {
+        throw new Error('Planting debug layout failed to resolve all ten canonical road identities.');
+      }
+      const corridorPositions: number[] = [];
+      appendBounds(corridorPositions, entry.zone.bounds, PLANTING_CORRIDOR_OFFSET);
+      plantingCorridorGroup.add(createLineObject(
+        resources,
+        group,
+        `debug:planting-corridor:${entry.roadId}`,
+        corridorPositions,
+        materials.planting,
+      ));
+
+      const markerPositions: number[] = [];
+      appendCross(markerPositions, entry.marker, PLANTING_MARKER_RADIUS, PLANTING_CORRIDOR_OFFSET + 0.08);
+      plantingMarkerGroup.add(createLineObject(
+        resources,
+        group,
+        `debug:planting-marker:${entry.roadId}:${entry.speciesId}`,
+        markerPositions,
+        materials.planting,
+      ));
+      plantingEndpointGroup.add(createPlantingEndpointGlyph(entry, plantingEndpointMaterial));
+
+      const labelSpec = createPlantingLabelSpec(entry, index);
+      const badgeText = labelSpec.badgeText;
+      if (badgeText === undefined || plantingBadgeCodes.has(badgeText)) {
+        throw new Error(`Planting debug badge ${badgeText ?? 'missing'} must be unique.`);
+      }
+      plantingBadgeCodes.add(badgeText);
+      const endpointBadgeMaterial = createPlantingEndpointBadgeMaterial(
+        resources,
+        group,
+        badgeText,
+      );
+      plantingEndpointBadgeGroup.add(createPlantingEndpointBadge(
+        entry,
+        badgeText,
+        endpointBadgeMaterial,
+      ));
+      const leaderWaypoints = plantingLeaderWaypoints(entry, labelSpec.position);
+      const leaderKeylinePositions: number[] = [];
+      const leaderStrokePositions: number[] = [];
+      const leaderPositions: number[] = [];
+      const leaderPathVertices = [
+        entry.marker,
+        ...(leaderWaypoints ?? []),
+        labelSpec.position,
+      ];
+      plantingLeaderPaths.push({ roadId: entry.roadId, vertices: leaderPathVertices });
+      appendPlantingLeaderRibbon(
+        leaderKeylinePositions,
+        entry.marker,
+        labelSpec.position,
+        PLANTING_CORRIDOR_OFFSET + 0.12,
+        PLANTING_LEADER_KEYLINE_HALF_WIDTH,
+        leaderWaypoints,
+      );
+      appendPlantingLeaderRibbon(
+        leaderStrokePositions,
+        entry.marker,
+        labelSpec.position,
+        PLANTING_CORRIDOR_OFFSET + 0.12,
+        PLANTING_LEADER_STROKE_HALF_WIDTH,
+        leaderWaypoints,
+      );
+      appendElevatedLabelLeader(
+        leaderPositions,
+        entry.marker,
+        labelSpec.position,
+        PLANTING_CORRIDOR_OFFSET + 0.12,
+        PLANTING_LABEL_ALTITUDE,
+        undefined,
+        leaderWaypoints,
+      );
+      const bridgeRenderOrder = PLANTING_LEADER_RENDER_ORDER_BASE
+        + index * PLANTING_LEADER_RENDER_ORDER_STRIDE;
+      plantingLeaderKeylineGroup.add(
+        createRibbonObject(
+          resources,
+          group,
+          `debug:planting-label-leader-keyline:${entry.roadId}`,
+          leaderKeylinePositions,
+          plantingLeaderKeylineMaterial,
+          bridgeRenderOrder,
+        ),
+        createRibbonObject(
+          resources,
+          group,
+          `debug:planting-label-leader-stroke:${entry.roadId}`,
+          leaderStrokePositions,
+          plantingLeaderStrokeMaterial,
+          bridgeRenderOrder + 1,
+        ),
+      );
+      const leader = createLineObject(
+        resources,
+        group,
+        `debug:planting-label-leader:${entry.roadId}`,
+        leaderPositions,
+        plantingLeaderMaterial,
+      );
+      leader.renderOrder = bridgeRenderOrder + 2;
+      plantingLeaderGroup.add(leader);
+      plantingProjectionLabels.push(labelSpec);
+      plantingLabelGroup.add(createDebugLabel(resources, group, labelSpec));
+    }
+
+
+    assertStaticCaptureLabelLayout('planting', plantingProjectionLabels);
+    assertPlantingLeaderLaneSpacing();
+    assertPlantingLeaderPathVertices(plantingLeaderPaths);
+    assertPlantingBadgeLayout(
+      plantingProjectionLabels,
+      plantingEndpointBadgeGroup.children.length,
+      plantingBadgeCodes,
+    );
+    plantingLabelCount = plantingLabelGroup.children.length;
+    const plantingEndpointCount = plantingEndpointGroup.children.length;
+    if (plantingLabelCount !== ROAD_SPECS.length
+      || plantingEndpointCount !== ROAD_SPECS.length
+      || plantingLeaderKeylineGroup.children.length !== ROAD_SPECS.length * 2) {
+      throw new Error(
+        `Planting debug view must create exactly ${ROAD_SPECS.length} readable labels, endpoints, badges, and leader pairs.`,
+      );
+    }
+    root.add(
+      plantingCorridorGroup,
+      plantingMarkerGroup,
+      plantingEndpointGroup,
+      plantingEndpointBadgeGroup,
+      plantingLeaderKeylineGroup,
+      plantingLeaderGroup,
+      plantingLabelGroup,
+    );
+    plantingLayerObjectNames.push(
+      plantingCorridorGroup.name,
+      plantingMarkerGroup.name,
+      plantingEndpointGroup.name,
+      plantingEndpointBadgeGroup.name,
+      plantingLeaderKeylineGroup.name,
+      plantingLeaderGroup.name,
+      plantingLabelGroup.name,
+    );
+  }
+
   const activeMarker = createActiveAnchorMarker(resources, group, materials);
   root.add(activeMarker);
 
@@ -2232,6 +2913,7 @@ export function createWorldDebug(
       ]),
       'debug:sightline-labels',
     ]),
+    planting: createDebugViewLayer(root, 'debug:view-layer:planting', plantingLayerObjectNames),
   };
 
   return new WorldDebugControllerImplementation(
@@ -2239,6 +2921,7 @@ export function createWorldDebug(
     true,
     activeMarker,
     labelGroup.children.length,
+    plantingLabelCount,
     DISTRICT_DATA.sightlines.length,
     true,
     viewLayers,

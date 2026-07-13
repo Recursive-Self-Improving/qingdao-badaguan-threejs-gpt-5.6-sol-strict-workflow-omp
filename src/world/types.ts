@@ -124,12 +124,168 @@ export interface LandmarkAnchor extends RouteAnchorBase {
 
 export type RouteAnchor = StandardRouteAnchor | LandmarkAnchor;
 
+export type RoadId =
+  | 'shaoguan'
+  | 'ningwuguan'
+  | 'zijingguan'
+  | 'zhengyangguan'
+  | 'jiayuguan'
+  | 'juyongguan'
+  | 'linhuaiguan'
+  | 'wushengguan'
+  | 'hangu-pass'
+  | 'shanhaiguan';
+
+export type VegetationSpecies =
+  | 'peach'
+  | 'crabapple'
+  | 'cedar'
+  | 'crape-myrtle'
+  | 'maple'
+  | 'ginkgo'
+  | 'chinese-juniper'
+  | 'plane-tree';
+
+export type VegetationCategory =
+  | 'flowering-deciduous'
+  | 'autumn-deciduous'
+  | 'evergreen-conifer'
+  | 'deciduous-canopy';
+
+export interface VegetationPalette {
+  readonly foliage: readonly [string, ...string[]];
+  readonly trunk: string;
+  readonly litter: string | null;
+}
+
+export interface RoadPlantingCue {
+  readonly roadId: RoadId;
+  readonly species: VegetationSpecies;
+  readonly category: VegetationCategory;
+  readonly palette: VegetationPalette;
+  readonly identityPriority: 0;
+  readonly provenance: AuthoredInference;
+}
+
+export interface RoadPlantingIdentity {
+  readonly roadId: RoadId;
+  readonly speciesId: VegetationSpecies;
+}
+
 export interface PlantingZone {
   readonly id: string;
+  readonly roadId: RoadId;
   readonly bounds: Bounds2;
-  readonly futureTheme: 'ginkgo' | 'maple' | 'mixed';
+  readonly side: 'north' | 'south' | 'east' | 'west';
+  readonly minimumRoadClearance: 12;
+  readonly identity: true;
   readonly inference: AuthoredInference;
 }
+
+export type LandscapeDensity = 'high' | 'medium' | 'low';
+export type LandscapeMotion = 'standard' | 'reduced';
+
+export interface LandscapeSettings {
+  readonly density: LandscapeDensity;
+  readonly motion: LandscapeMotion;
+}
+
+export interface VegetationLodBand {
+  readonly id: 'near' | 'mid' | 'far';
+  readonly maximumDistance: number;
+  readonly canopySegments: number;
+}
+
+export interface VegetationLodPolicy {
+  readonly density: LandscapeDensity;
+  readonly identityInstancesPerRoad: number;
+  readonly infillFraction: number;
+  readonly accentFraction: number;
+  readonly bands: readonly VegetationLodBand[];
+}
+
+export interface LandscapeCameraView {
+  readonly id: string;
+  readonly position: readonly [number, number, number];
+  readonly target: readonly [number, number, number];
+  readonly roadIds: readonly RoadId[];
+  readonly clearanceBounds: Bounds2;
+  readonly clearanceIntersections: number;
+  readonly ySemantics: 'world';
+}
+
+export interface LandscapeClearanceBound {
+  readonly id: string;
+  readonly roadId: RoadId | null;
+  readonly kind: 'vegetation' | 'detail' | 'camera';
+  readonly bounds: Bounds2;
+}
+
+export interface LandscapeReuseMetrics {
+  readonly sharedGeometryCount: number;
+  readonly sharedMaterialCount: number;
+  readonly instanceBatchCount: number;
+  readonly instanceCount: number;
+  readonly estimatedInstancedDrawCalls: number;
+  readonly naiveRepeatedDrawCalls: number;
+}
+
+export interface LandscapeMotionMetrics {
+  readonly time: number;
+  readonly amplitude: number;
+  readonly transformChecksum: number;
+}
+
+export interface LandscapeDensityMetrics {
+  readonly vegetationInstances: number;
+  readonly identityInstances: number;
+  readonly detailInstances: number;
+  readonly drawCalls: number;
+  readonly triangles: number;
+}
+
+export interface LandscapeBuildMetrics {
+  readonly settings: LandscapeSettings;
+  readonly densityCounts: Readonly<Record<LandscapeDensity, LandscapeDensityMetrics>>;
+  readonly active: LandscapeDensityMetrics;
+  readonly identities: readonly RoadPlantingIdentity[];
+  readonly lodBands: readonly VegetationLodBand[];
+  readonly reuse: LandscapeReuseMetrics;
+  readonly motion: LandscapeMotionMetrics;
+  readonly clearanceIntersections: number;
+  readonly transparentObjects: number;
+  readonly depthWriteDisabled: number;
+}
+
+export interface LandscapeUpdateFrame {
+  readonly elapsedSeconds: number;
+  readonly deltaSeconds: number;
+}
+
+export interface LandscapeDebugMarker {
+  readonly roadId: RoadId;
+  readonly speciesId: VegetationSpecies;
+  readonly position: Vec2;
+}
+
+export interface LandscapeDebugLayout {
+  readonly markers: readonly LandscapeDebugMarker[];
+  readonly zones: readonly PlantingZone[];
+}
+
+export interface LandscapeController {
+  readonly root: Object3D;
+  readonly settings: LandscapeSettings;
+  readonly metrics: LandscapeBuildMetrics;
+  readonly cameraViews: readonly LandscapeCameraView[];
+  readonly clearanceBounds: readonly LandscapeClearanceBound[];
+  readonly debugLayout: LandscapeDebugLayout;
+  update(frame: LandscapeUpdateFrame): void;
+  reset(): void;
+  setCaptureTime(time: number | null): void;
+}
+
+export type LandscapeBuildResult = LandscapeController;
 
 export interface RouteSpec {
   readonly id: string;
@@ -259,6 +415,9 @@ export interface DistrictData {
   readonly landmarkAnchors: readonly LandmarkAnchor[];
   readonly spawnYaw: number;
   readonly resetYaw: number;
+  readonly roadPlantingCues: readonly RoadPlantingCue[];
+  readonly plantingZones: readonly PlantingZone[];
+  readonly landscapeCameraViews: readonly LandscapeCameraView[];
   readonly provenance: DistrictProvenance;
 }
 
@@ -281,8 +440,7 @@ export type NavigationResolver = (
 ) => NavigationResult;
 
 export type GroundHeightSampler = (x: number, z: number) => number;
-
-export type WorldDebugViewName = 'grid' | 'public-green' | 'sightlines';
+export type WorldDebugViewName = 'grid' | 'public-green' | 'sightlines' | 'planting';
 
 export interface WorldDebugController {
   readonly root: Object3D;
@@ -290,6 +448,7 @@ export interface WorldDebugController {
   readonly currentAnchorId: string | null;
   readonly currentView: WorldDebugViewName | null;
   readonly roadLabelCount: number;
+  readonly plantingLabelCount: number;
   readonly sightlineCount: number;
   readonly publicGreenVisible: boolean;
   setVisible(visible: boolean): void;
@@ -302,6 +461,7 @@ export interface WorldBuildResult {
   readonly data: DistrictData;
   readonly debug: WorldDebugController;
   readonly architecture: ArchitectureBuildResult;
+  readonly landscape: LandscapeBuildResult;
   readonly navigation: {
     readonly resolve: NavigationResolver;
     readonly sampleGroundHeight: GroundHeightSampler;

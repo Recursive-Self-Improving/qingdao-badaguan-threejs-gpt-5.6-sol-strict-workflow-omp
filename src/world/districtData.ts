@@ -2,8 +2,13 @@ import type {
   DistrictData,
   ArchitectureSite,
   LandmarkAnchor,
+  LandscapeCameraView,
+  LandscapeDensity,
   LineSegment,
+  PlantingZone,
+  RoadPlantingCue,
   RoadSpec,
+  VegetationLodPolicy,
   RouteAnchor,
 } from './types';
 
@@ -219,6 +224,52 @@ const authoredArchitectureSites = [
   },
 ] as const satisfies readonly ArchitectureSite[];
 
+const plantingInference = inference(
+  'Representative road-specific planting cues and safe verge zones are artistic abstractions for this experience, not a claim about current tree inventory or surveyed planting positions.',
+);
+
+const authoredRoadPlantingCues = [
+  { roadId: 'shaoguan', species: 'peach', category: 'flowering-deciduous', palette: { foliage: ['#8f6d3d', '#b36e5b'], trunk: '#604a38', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'ningwuguan', species: 'crabapple', category: 'flowering-deciduous', palette: { foliage: ['#7b783f', '#a85f50'], trunk: '#584638', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'zijingguan', species: 'cedar', category: 'evergreen-conifer', palette: { foliage: ['#314d3d', '#45604a'], trunk: '#514337', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'zhengyangguan', species: 'crape-myrtle', category: 'flowering-deciduous', palette: { foliage: ['#77753e', '#9b5b69'], trunk: '#665347', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'jiayuguan', species: 'maple', category: 'autumn-deciduous', palette: { foliage: ['#9b4b2e', '#bd6b2f', '#d08a38'], trunk: '#574337', litter: '#9b5830' }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'juyongguan', species: 'ginkgo', category: 'autumn-deciduous', palette: { foliage: ['#b79b32', '#d0b84b'], trunk: '#5b5040', litter: '#b89c35' }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'linhuaiguan', species: 'chinese-juniper', category: 'evergreen-conifer', palette: { foliage: ['#2f5143', '#466253'], trunk: '#57463a', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'wushengguan', species: 'plane-tree', category: 'deciduous-canopy', palette: { foliage: ['#687344', '#8a7840'], trunk: '#80735e', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'hangu-pass', species: 'plane-tree', category: 'deciduous-canopy', palette: { foliage: ['#697746', '#8b7c43'], trunk: '#81745f', litter: null }, identityPriority: 0, provenance: plantingInference },
+  { roadId: 'shanhaiguan', species: 'plane-tree', category: 'deciduous-canopy', palette: { foliage: ['#667143', '#877940'], trunk: '#7d715d', litter: null }, identityPriority: 0, provenance: plantingInference },
+] as const satisfies readonly RoadPlantingCue[];
+
+const authoredPlantingZones = [
+  { id: 'shaoguan-peach-north', roadId: 'shaoguan', bounds: { minX: -180, maxX: -150, minZ: -274, maxZ: -272 }, side: 'north', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'ningwuguan-crabapple-south', roadId: 'ningwuguan', bounds: { minX: 92, maxX: 104, minZ: -203, maxZ: -201 }, side: 'south', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'zijingguan-cedar-north', roadId: 'zijingguan', bounds: { minX: -100, maxX: -80, minZ: -184, maxZ: -182 }, side: 'north', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'zhengyangguan-myrtle-north', roadId: 'zhengyangguan', bounds: { minX: -100, maxX: -80, minZ: -143, maxZ: -141 }, side: 'north', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'jiayuguan-maple-north', roadId: 'jiayuguan', bounds: { minX: 140, maxX: 160, minZ: -94, maxZ: -92 }, side: 'north', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'juyongguan-ginkgo-north', roadId: 'juyongguan', bounds: { minX: -100, maxX: -80, minZ: -49, maxZ: -47 }, side: 'north', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'linhuaiguan-juniper-north', roadId: 'linhuaiguan', bounds: { minX: 140, maxX: 160, minZ: -4, maxZ: -2 }, side: 'north', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'wushengguan-plane-east', roadId: 'wushengguan', bounds: { minX: -106, maxX: -104, minZ: -110, maxZ: -100 }, side: 'east', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'hangu-plane-east', roadId: 'hangu-pass', bounds: { minX: 12, maxX: 14, minZ: -245, maxZ: -235 }, side: 'east', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+  { id: 'shanhaiguan-plane-east', roadId: 'shanhaiguan', bounds: { minX: 134, maxX: 136, minZ: -150, maxZ: -140 }, side: 'east', minimumRoadClearance: 12, identity: true, inference: plantingInference },
+] as const satisfies readonly PlantingZone[];
+
+const authoredLandscapeCameraViews = [
+  { id: 'southern-flowering-roads', position: [-34, 12, -286], target: [-26, 4, -230], roadIds: ['shaoguan', 'ningwuguan'], clearanceBounds: { minX: -36, maxX: -32, minZ: -288, maxZ: -284 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'cedar-myrtle-roads', position: [-68, 11, -150], target: [-110, 4, -164], roadIds: ['zijingguan', 'zhengyangguan'], clearanceBounds: { minX: -70, maxX: -66, minZ: -152, maxZ: -148 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'autumn-maple-road', position: [104, 10, -105], target: [150, 4, -80], roadIds: ['jiayuguan'], clearanceBounds: { minX: 102, maxX: 106, minZ: -107, maxZ: -103 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'autumn-ginkgo-road', position: [-72, 10, -92], target: [-72, 4, -35], roadIds: ['juyongguan'], clearanceBounds: { minX: -74, maxX: -70, minZ: -94, maxZ: -90 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'shore-juniper-road', position: [170, 9, -18], target: [150, 4, 10], roadIds: ['linhuaiguan'], clearanceBounds: { minX: 168, maxX: 172, minZ: -20, maxZ: -16 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'western-plane-road', position: [-50, 11, -155], target: [-120, 4, -154], roadIds: ['wushengguan'], clearanceBounds: { minX: -52, maxX: -48, minZ: -157, maxZ: -153 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'central-eastern-plane-roads', position: [-30, 12, -238], target: [65, 4, -190], roadIds: ['hangu-pass', 'shanhaiguan'], clearanceBounds: { minX: -32, maxX: -28, minZ: -240, maxZ: -236 }, clearanceIntersections: 0, ySemantics: 'world' },
+] as const satisfies readonly LandscapeCameraView[];
+
+const authoredVegetationLodPolicies = {
+  high: { density: 'high', identityInstancesPerRoad: 1, infillFraction: 1, accentFraction: 1, bands: [{ id: 'near', maximumDistance: 70, canopySegments: 10 }, { id: 'mid', maximumDistance: 150, canopySegments: 7 }, { id: 'far', maximumDistance: 320, canopySegments: 5 }] },
+  medium: { density: 'medium', identityInstancesPerRoad: 1, infillFraction: 0.62, accentFraction: 0.5, bands: [{ id: 'near', maximumDistance: 60, canopySegments: 9 }, { id: 'mid', maximumDistance: 135, canopySegments: 6 }, { id: 'far', maximumDistance: 280, canopySegments: 5 }] },
+  low: { density: 'low', identityInstancesPerRoad: 1, infillFraction: 0.28, accentFraction: 0, bands: [{ id: 'near', maximumDistance: 50, canopySegments: 7 }, { id: 'mid', maximumDistance: 115, canopySegments: 5 }, { id: 'far', maximumDistance: 240, canopySegments: 4 }] },
+} as const satisfies Readonly<Record<'high' | 'medium' | 'low', VegetationLodPolicy>>;
+
 const authoredDistrict = {
   worldBounds: { minX: -210, maxX: 210, minZ: -300, maxZ: 60 },
   navigableBounds: { minX: -200, maxX: 200, minZ: -290, maxZ: 38 },
@@ -304,6 +355,9 @@ const authoredDistrict = {
     { id: 'garden-view', theme: 'green', from: { x: 0, z: -35 }, toward: { x: 52, z: -35 } },
     { id: 'coast-view', theme: 'coast', from: { x: 0, z: 5 }, toward: { x: 0, z: 38 } },
   ],
+  roadPlantingCues: authoredRoadPlantingCues,
+  plantingZones: authoredPlantingZones,
+  landscapeCameraViews: authoredLandscapeCameraViews,
   provenance: {
     coordinateSystem: 'Metres; +X east, -Z north, +Y up.',
     roadLayout: roadInference,
@@ -323,3 +377,7 @@ export const DISTRICT_DATA: DistrictData = deepFreeze(authoredDistrict);
 export const ROAD_SPECS: readonly RoadSpec[] = DISTRICT_DATA.roads;
 export const ROUTE_ANCHORS: readonly RouteAnchor[] = DISTRICT_DATA.routeAnchors;
 export const ARCHITECTURE_SITES: readonly ArchitectureSite[] = DISTRICT_DATA.architectureSites;
+export const ROAD_PLANTING_CUES: readonly RoadPlantingCue[] = DISTRICT_DATA.roadPlantingCues;
+export const PLANTING_ZONES: readonly PlantingZone[] = DISTRICT_DATA.plantingZones;
+export const LANDSCAPE_CAMERA_VIEWS: readonly LandscapeCameraView[] = DISTRICT_DATA.landscapeCameraViews;
+export const VEGETATION_LOD_POLICIES: Readonly<Record<LandscapeDensity, VegetationLodPolicy>> = deepFreeze(authoredVegetationLodPolicies);

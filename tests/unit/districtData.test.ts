@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { DISTRICT_DATA, ROAD_SPECS, ROUTE_ANCHORS } from '../../src/world/districtData';
+import {
+  DISTRICT_DATA,
+  LANDSCAPE_CAMERA_VIEWS,
+  PLANTING_ZONES,
+  ROAD_PLANTING_CUES,
+  ROAD_SPECS,
+  ROUTE_ANCHORS,
+} from '../../src/world/districtData';
 import type { Bounds2, Vec2 } from '../../src/world/types';
 
 const expectedEastWestNames = [
@@ -364,5 +371,19 @@ describe('authored Badaguan district data', () => {
     expect(DISTRICT_DATA.provenance.publicGreen.status).toBe('authored-inference');
     expect(DISTRICT_DATA.provenance.routeGeometry.status).toBe('authored-inference');
     expect(DISTRICT_DATA.provenance.buildingFootprints.status).toBe('authored-inference');
+  });
+
+  it('publishes landscape records through the canonical district object with authored provenance', () => {
+    expect(ROAD_PLANTING_CUES).toBe(DISTRICT_DATA.roadPlantingCues);
+    expect(PLANTING_ZONES).toBe(DISTRICT_DATA.plantingZones);
+    expect(LANDSCAPE_CAMERA_VIEWS).toBe(DISTRICT_DATA.landscapeCameraViews);
+    expect(ROAD_PLANTING_CUES).toHaveLength(ROAD_SPECS.length);
+    expect(PLANTING_ZONES).toHaveLength(ROAD_SPECS.length);
+    expect(LANDSCAPE_CAMERA_VIEWS).toHaveLength(7);
+    expectDeeplyFrozen(ROAD_PLANTING_CUES);
+    expectDeeplyFrozen(PLANTING_ZONES);
+    expectDeeplyFrozen(LANDSCAPE_CAMERA_VIEWS);
+    expect(ROAD_PLANTING_CUES.every(({ provenance }) => provenance.status === 'authored-inference')).toBe(true);
+    expect(PLANTING_ZONES.every(({ inference }) => inference.status === 'authored-inference')).toBe(true);
   });
 });
