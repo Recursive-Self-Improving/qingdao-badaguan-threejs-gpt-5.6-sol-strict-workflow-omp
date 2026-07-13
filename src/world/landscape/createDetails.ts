@@ -32,6 +32,7 @@ export interface DetailVegetationAnchor {
   readonly species: VegetationSpecies;
   readonly identity: boolean;
   readonly position: Vec2;
+  readonly clearanceBound: Bounds2;
 }
 
 /** Structural seam accepted directly by the vegetation factory's immutable layout. */
@@ -160,6 +161,7 @@ interface DetailBatch {
 
 interface PlacementContext {
   readonly data: DistrictData;
+  readonly vegetationInstances: readonly DetailVegetationAnchor[];
   readonly accepted: DetailCandidate[];
   rejectedCandidates: number;
 }
@@ -182,6 +184,7 @@ const ROAD_CLEARANCE_MARGIN = 0.6;
 const SITE_CLEARANCE = 1;
 const PATH_CLEARANCE_MARGIN = 0.65;
 const PROMENADE_CLEARANCE_MARGIN = 0.35;
+const VEGETATION_CLEARANCE_MARGIN = 0.35;
 const SIGHTLINE_HALF_WIDTH = 5.5;
 const ROUTE_ANCHOR_CLEARANCE = 3;
 const ACCESS_APRON_CLEARANCE = 4;
@@ -197,8 +200,9 @@ const ROADSIDE_JUNIPER_RADIUS = 1.7;
 const ROADSIDE_JUNIPER_WIDTH = 3.2;
 const ROADSIDE_JUNIPER_HEIGHT = 1.15;
 const ROADSIDE_JUNIPER_DEPTH = 1.8;
-const SHORE_DETAIL_Z_MIN = 29;
-const SHORE_DETAIL_Z_MAX = 31;
+const SHORE_INLAND_RANGE = 2;
+const BOLLARD_INLAND_OFFSET = 1.8;
+const SHORE_STONE_INLAND_OFFSET = 1.65;
 const TWO_PI = Math.PI * 2;
 const SHARED_GEOMETRY_COUNT = 5;
 const SHARED_MATERIAL_COUNT = 9;
@@ -244,6 +248,36 @@ function containsPoint(bounds: Bounds2, point: Vec2, padding = 0): boolean {
     && point.x <= bounds.maxX - padding
     && point.z >= bounds.minZ + padding
     && point.z <= bounds.maxZ - padding;
+}
+
+function boundsIntersect(first: Bounds2, second: Bounds2, margin = 0): boolean {
+  return first.minX < second.maxX + margin
+    && first.maxX > second.minX - margin
+    && first.minZ < second.maxZ + margin
+    && first.maxZ > second.minZ - margin;
+}
+
+function candidateBounds(candidate: DetailCandidate): Bounds2 {
+  if (candidate.variant === 'roadside-juniper-shrub') {
+    const cosine = Math.abs(Math.cos(candidate.yaw));
+    const sine = Math.abs(Math.sin(candidate.yaw));
+    const halfX = ROADSIDE_JUNIPER_WIDTH * 0.5;
+    const halfZ = ROADSIDE_JUNIPER_DEPTH * 0.5;
+    const extentX = cosine * halfX + sine * halfZ;
+    const extentZ = sine * halfX + cosine * halfZ;
+    return {
+      minX: candidate.position.x - extentX,
+      maxX: candidate.position.x + extentX,
+      minZ: candidate.position.z - extentZ,
+      maxZ: candidate.position.z + extentZ,
+    };
+  }
+  return {
+    minX: candidate.position.x - candidate.radius,
+    maxX: candidate.position.x + candidate.radius,
+    minZ: candidate.position.z - candidate.radius,
+    maxZ: candidate.position.z + candidate.radius,
+  };
 }
 
 function pointInExpandedBounds(point: Vec2, bounds: Bounds2, expansion: number): boolean {
@@ -427,6 +461,14 @@ function isFixedClear(candidate: DetailCandidate, data: DistrictData): boolean {
   return true;
 }
 
+function isVegetationClear(candidate: DetailCandidate, context: PlacementContext): boolean {
+  if (candidate.kind === 'leaf-litter') return true;
+  const bounds = candidateBounds(candidate);
+  return !context.vegetationInstances.some(({ clearanceBound }) => (
+    boundsIntersect(bounds, clearanceBound, VEGETATION_CLEARANCE_MARGIN)
+  ));
+}
+
 function overlapsAccepted(candidate: DetailCandidate, accepted: readonly DetailCandidate[]): boolean {
   if (candidate.kind === 'leaf-litter') return false;
   return accepted.some((placed) => placed.kind !== 'leaf-litter'
@@ -458,8 +500,8 @@ function acceptCandidateGroup(
 
   const selected = selectDensity(eligible, density);
   let acceptedFromGroup = 0;
-  const tryAccept = (candidate: DetailCandidate): boolean => {
-    if (overlapsAccepted(candidate, context.accepted)) {
+  const tryAcceptAt = (candidate: DetailCandidate): boolean => {
+    if (!isVegetationClear(candidate, context) || overlapsAccepted(candidate, context.accepted)) {
       context.rejectedCandidates += 1;
       return false;
     }
@@ -467,13 +509,33 @@ function acceptCandidateGroup(
     acceptedFromGroup += 1;
     return true;
   };
+  const tryAccept = (candidate: DetailCandidate): boolean => {
+    if (tryAcceptAt(candidate)) return true;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const direction = unitHash(`${candidate.id}:reserve:${attempt}`, 127) < 0.5 ? -1 : 1;
+      const distance = 2.25 + Math.floor(attempt * 0.5) * 1.25;
+      const angle = unitHash(`${candidate.id}:reserve:${attempt}`, 131) * TWO_PI;
+      const reserve = {
+        ...candidate,
+        position: candidate.kind === 'bollard' || candidate.kind === 'shore-detail'
+          ? { x: candidate.position.x + direction * distance, z: candidate.position.z }
+          : {
+            x: candidate.position.x + Math.cos(angle) * distance,
+            z: candidate.position.z + Math.sin(angle) * distance,
+          },
+      };
+      if (isFixedClear(reserve, context.data) && tryAcceptAt(reserve)) return true;
+    }
+    return false;
+  };
 
   for (const candidate of selected) tryAccept(candidate);
-  if (!requireOne || acceptedFromGroup !== 0) return;
+  const targetCount = Math.max(requireOne ? 1 : 0, selected.length);
+  if (acceptedFromGroup >= targetCount) return;
   const selectedIds = new Set(selected.map(({ id }) => id));
   for (const candidate of eligible) {
     if (selectedIds.has(candidate.id)) continue;
-    if (tryAccept(candidate)) return;
+    if (tryAccept(candidate) && acceptedFromGroup >= targetCount) return;
   }
 }
 
@@ -561,14 +623,39 @@ function createLampCandidates(data: DistrictData): readonly DetailCandidate[] {
   return candidates;
 }
 
+function coastDetailZRange(data: DistrictData): {
+  readonly inlandDirection: -1 | 1;
+  readonly landwardEdgeZ: number;
+  readonly minZ: number;
+  readonly maxZ: number;
+} {
+  const centerline = data.coast.promenade.centerline;
+  const fallbackZ = data.coast.screen.z;
+  const centerMinZ = centerline.reduce((minimum, point) => Math.min(minimum, point.z), centerline[0]?.z ?? fallbackZ);
+  const centerMaxZ = centerline.reduce((maximum, point) => Math.max(maximum, point.z), centerline[0]?.z ?? fallbackZ);
+  const centerZ = (centerMinZ + centerMaxZ) * 0.5;
+  const inlandDirection: -1 | 1 = data.coast.edgeZ >= centerZ ? -1 : 1;
+  const landwardEdgeZ = inlandDirection === -1
+    ? centerMinZ - data.coast.promenade.width * 0.5
+    : centerMaxZ + data.coast.promenade.width * 0.5;
+  const inlandLimitZ = landwardEdgeZ + inlandDirection * SHORE_INLAND_RANGE;
+  return {
+    inlandDirection,
+    landwardEdgeZ,
+    minZ: Math.min(landwardEdgeZ, inlandLimitZ),
+    maxZ: Math.max(landwardEdgeZ, inlandLimitZ),
+  };
+}
+
 function createBollardCandidates(data: DistrictData): readonly DetailCandidate[] {
   const candidates: DetailCandidate[] = [];
-  const z = Math.max(
-    SHORE_DETAIL_Z_MIN,
-    Math.min(SHORE_DETAIL_Z_MAX, data.coast.edgeZ - 8.8),
-  );
+  const range = coastDetailZRange(data);
+  const z = Math.max(range.minZ, Math.min(
+    range.maxZ,
+    range.landwardEdgeZ + range.inlandDirection * BOLLARD_INLAND_OFFSET,
+  ));
   let index = 0;
-  for (let x = data.worldBounds.minX + 22; x <= data.worldBounds.maxX - 22; x += 32) {
+  for (let x = data.coast.seaBounds.minX + 22; x <= data.coast.seaBounds.maxX - 22; x += 32) {
     candidates.push({
       id: `shore-bollard:${index}`,
       roadId: null,
@@ -585,13 +672,14 @@ function createBollardCandidates(data: DistrictData): readonly DetailCandidate[]
 
 function createShoreCandidates(data: DistrictData): readonly DetailCandidate[] {
   const candidates: DetailCandidate[] = [];
+  const range = coastDetailZRange(data);
   let index = 0;
-  for (let x = data.worldBounds.minX + 16; x <= data.worldBounds.maxX - 16; x += 24) {
+  for (let x = data.coast.seaBounds.minX + 16; x <= data.coast.seaBounds.maxX - 16; x += 24) {
     const jitter = (unitHash(`shore-stone:${index}`, 31) - 0.5) * 0.4;
-    const z = Math.max(
-      SHORE_DETAIL_Z_MIN,
-      Math.min(SHORE_DETAIL_Z_MAX, data.coast.edgeZ - 8.65 + jitter),
-    );
+    const z = Math.max(range.minZ, Math.min(
+      range.maxZ,
+      range.landwardEdgeZ + range.inlandDirection * (SHORE_STONE_INLAND_OFFSET - jitter),
+    ));
     candidates.push({
       id: `shore-stone:${index}`,
       roadId: null,
@@ -677,14 +765,24 @@ function createRoadsideJuniperUnderstoryCandidate(
   if (length <= 0) return null;
   const tangent = { x: (to.x - from.x) / length, z: (to.z - from.z) / length };
   const id = `roadside-juniper-understory:${anchor.id}`;
+  const clearanceOffset = Math.max(
+    ROADSIDE_JUNIPER_OFFSET,
+    Math.abs(tangent.x) * Math.max(
+      Math.abs(anchor.clearanceBound.minX - anchor.position.x),
+      Math.abs(anchor.clearanceBound.maxX - anchor.position.x),
+    ) + Math.abs(tangent.z) * Math.max(
+      Math.abs(anchor.clearanceBound.minZ - anchor.position.z),
+      Math.abs(anchor.clearanceBound.maxZ - anchor.position.z),
+    ) + VEGETATION_CLEARANCE_MARGIN + ROADSIDE_JUNIPER_WIDTH * 0.5,
+  );
   return {
     id,
     roadId: anchor.roadId,
     kind: 'understory',
     variant: 'roadside-juniper-shrub',
     position: {
-      x: anchor.position.x + tangent.x * ROADSIDE_JUNIPER_OFFSET,
-      z: anchor.position.z + tangent.z * ROADSIDE_JUNIPER_OFFSET,
+      x: anchor.position.x + tangent.x * clearanceOffset,
+      z: anchor.position.z + tangent.z * clearanceOffset,
     },
     yaw: Math.atan2(-tangent.z, tangent.x),
     radius: ROADSIDE_JUNIPER_RADIUS,
@@ -695,14 +793,32 @@ function replacePublicGreenUnderstoryWithRoadsideJuniper(
   layout: DetailVegetationLayout,
   context: PlacementContext,
 ): void {
-  const replacement = createRoadsideJuniperUnderstoryCandidate(layout, context.data);
-  if (replacement === null
-    || !isFixedClear(replacement, context.data)
-    || overlapsAccepted(replacement, context.accepted)) return;
+  const initial = createRoadsideJuniperUnderstoryCandidate(layout, context.data);
+  if (initial === null) return;
   const replacementIndex = context.accepted.findIndex(
     ({ variant }) => variant === 'public-green-shrub',
   );
-  if (replacementIndex >= 0) context.accepted[replacementIndex] = replacement;
+  if (replacementIndex < 0) return;
+  const otherAccepted = context.accepted.filter((_candidate, index) => index !== replacementIndex);
+  const tangent = { x: Math.cos(initial.yaw), z: -Math.sin(initial.yaw) };
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    const step = attempt === 0 ? 0 : Math.ceil(attempt * 0.5) * 2.5;
+    const direction = attempt % 2 === 0 ? -1 : 1;
+    const replacement = attempt === 0
+      ? initial
+      : {
+        ...initial,
+        position: {
+          x: initial.position.x + tangent.x * step * direction,
+          z: initial.position.z + tangent.z * step * direction,
+        },
+      };
+    if (!isFixedClear(replacement, context.data)
+      || !isVegetationClear(replacement, context)
+      || overlapsAccepted(replacement, otherAccepted)) continue;
+    context.accepted[replacementIndex] = replacement;
+    return;
+  }
 }
 
 function addLeafLitter(
@@ -1069,12 +1185,7 @@ function clearanceBounds(placements: readonly DetailCandidate[]): readonly Lands
     id: `detail:${placement.id}`,
     roadId: placement.roadId,
     kind: 'detail' as const,
-    bounds: freezeBounds({
-      minX: placement.position.x - placement.radius,
-      maxX: placement.position.x + placement.radius,
-      minZ: placement.position.z - placement.radius,
-      maxZ: placement.position.z + placement.radius,
-    }),
+    bounds: freezeBounds(candidateBounds(placement)),
   })));
 }
 
@@ -1125,6 +1236,7 @@ function createDetailPlan(options: CreateDetailsOptions): DetailPlan {
   const data = options.data ?? DISTRICT_DATA;
   const context: PlacementContext = {
     data,
+    vegetationInstances: vegetationLayout.instances,
     accepted: [],
     rejectedCandidates: 0,
   };

@@ -254,20 +254,24 @@ const authoredPlantingZones = [
   { id: 'shanhaiguan-plane-east', roadId: 'shanhaiguan', bounds: { minX: 134, maxX: 136, minZ: -150, maxZ: -140 }, side: 'east', minimumRoadClearance: 12, identity: true, inference: plantingInference },
 ] as const satisfies readonly PlantingZone[];
 
+// World-space Y is sampleGroundHeight(x, z) + the 1.68 m player eye height, encoded to six decimals.
 const authoredLandscapeCameraViews = [
-  { id: 'southern-flowering-roads', position: [-34, 12, -286], target: [-26, 4, -230], roadIds: ['shaoguan', 'ningwuguan'], clearanceBounds: { minX: -36, maxX: -32, minZ: -288, maxZ: -284 }, clearanceIntersections: 0, ySemantics: 'world' },
-  { id: 'cedar-myrtle-roads', position: [-68, 11, -150], target: [-110, 4, -164], roadIds: ['zijingguan', 'zhengyangguan'], clearanceBounds: { minX: -70, maxX: -66, minZ: -152, maxZ: -148 }, clearanceIntersections: 0, ySemantics: 'world' },
-  { id: 'autumn-maple-road', position: [104, 10, -105], target: [150, 4, -80], roadIds: ['jiayuguan'], clearanceBounds: { minX: 102, maxX: 106, minZ: -107, maxZ: -103 }, clearanceIntersections: 0, ySemantics: 'world' },
-  { id: 'autumn-ginkgo-road', position: [-72, 10, -92], target: [-72, 4, -35], roadIds: ['juyongguan'], clearanceBounds: { minX: -74, maxX: -70, minZ: -94, maxZ: -90 }, clearanceIntersections: 0, ySemantics: 'world' },
-  { id: 'shore-juniper-road', position: [170, 9, -18], target: [150, 4, 10], roadIds: ['linhuaiguan'], clearanceBounds: { minX: 168, maxX: 172, minZ: -20, maxZ: -16 }, clearanceIntersections: 0, ySemantics: 'world' },
-  { id: 'western-plane-road', position: [-50, 11, -155], target: [-120, 4, -154], roadIds: ['wushengguan'], clearanceBounds: { minX: -52, maxX: -48, minZ: -157, maxZ: -153 }, clearanceIntersections: 0, ySemantics: 'world' },
-  { id: 'central-eastern-plane-roads', position: [-30, 12, -238], target: [65, 4, -190], roadIds: ['hangu-pass', 'shanhaiguan'], clearanceBounds: { minX: -32, maxX: -28, minZ: -240, maxZ: -236 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'shaoguan-peach-road', position: [-195, 6.601323, -267.5], target: [-100, 6.511238, -267.5], roadIds: ['shaoguan'], clearanceBounds: { minX: -197, maxX: -193, minZ: -269.5, maxZ: -265.5 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'ningwuguan-crabapple-road', position: [74.826969, 5.709407, -210.386612], target: [159.826969, 5.581, -208.425073], roadIds: ['ningwuguan'], clearanceBounds: { minX: 72.826969, maxX: 76.826969, minZ: -212.386612, maxZ: -208.386612 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'zijingguan-cedar-road', position: [-145, 4.900335, -177.5], target: [-50, 4.88297, -177.5], roadIds: ['zijingguan'], clearanceBounds: { minX: -147, maxX: -143, minZ: -179.5, maxZ: -175.5 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'zhengyangguan-myrtle-road', position: [-150.214198, 4.196145, -133.925512], target: [-65.214198, 4.243663, -136.354084], roadIds: ['zhengyangguan'], clearanceBounds: { minX: -152.214198, maxX: -148.214198, minZ: -135.925512, maxZ: -131.925512 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'jiayuguan-maple-road', position: [-100, 3.363676, -80], target: [-20, 3.262565, -80], roadIds: ['jiayuguan'], clearanceBounds: { minX: -102, maxX: -98, minZ: -82, maxZ: -78 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'juyongguan-ginkgo-road', position: [-140, 2.596319, -41], target: [-55, 2.604859, -40.4375], roadIds: ['juyongguan'], clearanceBounds: { minX: -142, maxX: -138, minZ: -43, maxZ: -39 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'linhuaiguan-juniper-road', position: [105, 1.716736, 2.5], target: [185, 1.725409, 2.5], roadIds: ['linhuaiguan'], clearanceBounds: { minX: 103, maxX: 107, minZ: 0.5, maxZ: 4.5 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'wushengguan-plane-road', position: [-112, 2.309214, -25], target: [-107, 5.486047, -215], roadIds: ['wushengguan'], clearanceBounds: { minX: -114, maxX: -110, minZ: -27, maxZ: -23 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'hangu-pass-plane-road', position: [7.5, 6.285604, -250], target: [13, 5.801318, -222], roadIds: ['hangu-pass'], clearanceBounds: { minX: 5.5, maxX: 9.5, minZ: -252, maxZ: -248 }, clearanceIntersections: 0, ySemantics: 'world' },
+  { id: 'shanhaiguan-plane-road', position: [128, 4.17913, -135], target: [135, 4.691962, -160], roadIds: ['shanhaiguan'], clearanceBounds: { minX: 126, maxX: 130, minZ: -137, maxZ: -133 }, clearanceIntersections: 0, ySemantics: 'world' },
 ] as const satisfies readonly LandscapeCameraView[];
 
 const authoredVegetationLodPolicies = {
   high: { density: 'high', identityInstancesPerRoad: 1, infillFraction: 1, accentFraction: 1, bands: [{ id: 'near', maximumDistance: 70, canopySegments: 10 }, { id: 'mid', maximumDistance: 150, canopySegments: 7 }, { id: 'far', maximumDistance: 320, canopySegments: 5 }] },
   medium: { density: 'medium', identityInstancesPerRoad: 1, infillFraction: 0.62, accentFraction: 0.5, bands: [{ id: 'near', maximumDistance: 60, canopySegments: 9 }, { id: 'mid', maximumDistance: 135, canopySegments: 6 }, { id: 'far', maximumDistance: 280, canopySegments: 5 }] },
-  low: { density: 'low', identityInstancesPerRoad: 1, infillFraction: 0.28, accentFraction: 0, bands: [{ id: 'near', maximumDistance: 50, canopySegments: 7 }, { id: 'mid', maximumDistance: 115, canopySegments: 5 }, { id: 'far', maximumDistance: 240, canopySegments: 4 }] },
+  low: { density: 'low', identityInstancesPerRoad: 1, infillFraction: 0, accentFraction: 0, bands: [{ id: 'near', maximumDistance: 50, canopySegments: 7 }, { id: 'mid', maximumDistance: 115, canopySegments: 5 }, { id: 'far', maximumDistance: 240, canopySegments: 4 }] },
 } as const satisfies Readonly<Record<'high' | 'medium' | 'low', VegetationLodPolicy>>;
 
 const authoredDistrict = {

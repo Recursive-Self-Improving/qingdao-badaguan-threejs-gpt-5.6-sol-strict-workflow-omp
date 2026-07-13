@@ -379,7 +379,7 @@ describe('authored Badaguan district data', () => {
     expect(LANDSCAPE_CAMERA_VIEWS).toBe(DISTRICT_DATA.landscapeCameraViews);
     expect(ROAD_PLANTING_CUES).toHaveLength(ROAD_SPECS.length);
     expect(PLANTING_ZONES).toHaveLength(ROAD_SPECS.length);
-    expect(LANDSCAPE_CAMERA_VIEWS).toHaveLength(7);
+    expect(LANDSCAPE_CAMERA_VIEWS).toHaveLength(ROAD_SPECS.length);
     expectDeeplyFrozen(ROAD_PLANTING_CUES);
     expectDeeplyFrozen(PLANTING_ZONES);
     expectDeeplyFrozen(LANDSCAPE_CAMERA_VIEWS);

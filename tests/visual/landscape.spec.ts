@@ -128,7 +128,7 @@ test('captures the complete C06 overhead and corridor evidence matrix', async ({
   expect(overhead.world.debug.visible).toBe(true);
   const overheadMetrics = landscape(await metrics(page));
   expect(overheadMetrics.identities).toEqual(LANDSCAPE_ROAD_SPECIES.map(({ roadId, speciesId }) => ({ roadId, speciesId })));
-  expect(overheadMetrics.cameraViews).toHaveLength(7);
+  expect(overheadMetrics.cameraViews).toHaveLength(10);
   expect((await metrics(page)).camera.position).toEqual(LANDSCAPE_OVERHEAD_POSE.position);
   expect((await metrics(page)).runtime.renders).toBeGreaterThan(overheadBefore.runtime.renders);
   const overheadFile = `${OUTPUT_DIRECTORY}/desktop-chromium-overhead-planting.png`;
@@ -173,10 +173,10 @@ test('captures the complete C06 overhead and corridor evidence matrix', async ({
     await capture(page, 'reduced', fixture.id, fixture.roadIds, records);
   }
 
-  expect(records).toHaveLength(22);
-  expect(records.filter(({ mode }) => mode === 'standard')).toHaveLength(7);
-  expect(records.filter(({ mode }) => mode === 'low')).toHaveLength(7);
-  expect(records.filter(({ mode }) => mode === 'reduced')).toHaveLength(7);
+  expect(records).toHaveLength(31);
+  expect(records.filter(({ mode }) => mode === 'standard')).toHaveLength(10);
+  expect(records.filter(({ mode }) => mode === 'low')).toHaveLength(10);
+  expect(records.filter(({ mode }) => mode === 'reduced')).toHaveLength(10);
   expect(records.every(({ drawCalls, triangles }) => drawCalls > 0 && triangles > 0)).toBe(true);
   expect(records.every(({ clearanceIntersections }) => clearanceIntersections === 0)).toBe(true);
   expect(records.every(({ captureTime, motion }) => captureTime === 7.25 && motion.time === 7.25)).toBe(true);

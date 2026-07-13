@@ -11,6 +11,8 @@ const SUPPORTED_URL = '/?capability=supported';
 const METRICS_ATTRIBUTE = 'data-three-runtime-metrics';
 
 type LandscapeRuntimeMetrics = LandscapeBuildMetrics & {
+  readonly renderInfo: { readonly calls: number; readonly triangles: number };
+  readonly currentCameraClearanceIntersections: number;
   readonly cameraViews: readonly LandscapeCameraView[];
   readonly activeFrame: null | {
     readonly viewId: string;
@@ -57,6 +59,31 @@ async function command(page: Page, detail: LandscapeCommand | Readonly<Record<st
   }, { attribute: METRICS_ATTRIBUTE, payload: detail });
 }
 
+async function commandSnapshot(
+  page: Page,
+  detail: LandscapeCommand | Readonly<Record<string, unknown>>,
+): Promise<Readonly<{ before: ThreeRuntimeMetrics; after: ThreeRuntimeMetrics }>> {
+  return page.evaluate(({ attribute, payload }) => {
+    const canvas = document.querySelector('#app-canvas');
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Missing #app-canvas');
+    const initial = canvas.getAttribute(attribute);
+    if (initial === null) throw new Error(`Missing ${attribute}`);
+    const current = JSON.parse(initial) as ThreeRuntimeMetrics;
+    document.dispatchEvent(new CustomEvent('three-runtime:command', {
+      detail: { action: 'world-debug/set-visible', visible: current.world.debug.visible },
+    }));
+    const before = canvas.getAttribute(attribute);
+    if (before === null) throw new Error(`Missing ${attribute}`);
+    document.dispatchEvent(new CustomEvent('three-runtime:command', { detail: payload }));
+    const after = canvas.getAttribute(attribute);
+    if (after === null) throw new Error(`Missing ${attribute}`);
+    return {
+      before: JSON.parse(before) as ThreeRuntimeMetrics,
+      after: JSON.parse(after) as ThreeRuntimeMetrics,
+    };
+  }, { attribute: METRICS_ATTRIBUTE, payload: detail });
+}
+
 function landscape(value: ThreeRuntimeMetrics): LandscapeRuntimeMetrics {
   expect(value.world.landscape).toBeDefined();
   return value.world.landscape as LandscapeRuntimeMetrics;
@@ -76,7 +103,7 @@ test('publishes exact road planting identities, density metrics, opaque sorting,
   expect(value.settings.density).toBe('high');
   expect(value.identities).toEqual(expectedIdentities);
   expect(value.identities).toHaveLength(10);
-  expect(value.cameraViews).toHaveLength(7);
+  expect(value.cameraViews).toHaveLength(10);
   expect(value.cameraViews.flatMap(({ roadIds }) => roadIds).sort()).toEqual(LANDSCAPE_ROAD_SPECIES.map(({ roadId }) => roadId).sort());
   expect(value.identities.map(({ roadId }) => roadId).sort()).toEqual(LANDSCAPE_ROAD_SPECIES.map(({ roadId }) => roadId).sort());
   expect(value.cameraViews.every(({ clearanceIntersections }) => clearanceIntersections === 0)).toBe(true);
@@ -108,7 +135,8 @@ test('publishes exact road planting identities, density metrics, opaque sorting,
   expect(planting.world.debug).toMatchObject({ visible: true, activeView: 'planting', plantingLabelCount: 10 });
 });
 
-test('frames all seven literal corridors with exact road coverage and zero clearance intersections', async ({ page }) => {
+test('frames all ten literal corridors with exact one-road coverage and zero clearance intersections', async ({ page }) => {
+  test.setTimeout(45_000);
   await boot(page);
   for (const fixture of LANDSCAPE_CORRIDOR_POSES) {
     const before = await readMetrics(page);
@@ -131,20 +159,34 @@ test('frames all seven literal corridors with exact road coverage and zero clear
         && fixture.position.z <= view.clearanceBounds.maxZ;
       expect(insideCameraClearance, `${fixture.id} overlaps ${view.id} camera clearance`).toBe(false);
     }
-    const probed = await command(page, {
-      action: 'world-debug/probe',
-      ...fixture.position,
-      from: fixture.position,
-    });
-    expect(probed.world.debug.lastProbe, fixture.id).toMatchObject({
-      start: fixture.position,
-      requested: fixture.position,
-      position: fixture.position,
-      collided: false,
-      clamped: false,
-    });
-    expect({ x: probed.camera.position[0], z: probed.camera.position[2] }, fixture.id).toEqual(fixture.position);
-    expect(landscape(probed).clearanceIntersections, fixture.id).toBe(0);
+    let previous = fixture.from;
+    const sweepSteps = 5;
+    for (let step = 1; step <= sweepSteps; step += 1) {
+      const requested = {
+        x: fixture.from.x + ((fixture.position.x - fixture.from.x) * step) / sweepSteps,
+        z: fixture.from.z + ((fixture.position.z - fixture.from.z) * step) / sweepSteps,
+      };
+      const probed = await command(page, {
+        action: 'world-debug/probe',
+        ...requested,
+        from: previous,
+      });
+      expect(probed.world.debug.lastProbe, `${fixture.id} sweep ${step}`).toMatchObject({
+        start: previous,
+        requested,
+        position: requested,
+        collided: false,
+        clamped: false,
+      });
+      expect(
+        { x: probed.camera.position[0], z: probed.camera.position[2] },
+        `${fixture.id} sweep ${step}`,
+      ).toEqual(requested);
+      expect(landscape(probed).clearanceIntersections, `${fixture.id} sweep ${step}`).toBe(0);
+      expect(landscape(probed).currentCameraClearanceIntersections, `${fixture.id} sweep ${step}`).toBe(0);
+      previous = requested;
+    }
+    expect(previous, `${fixture.id} final sweep position`).toEqual(fixture.position);
   }
 });
 
@@ -155,13 +197,22 @@ test('explicit Low rebuild preserves camera and identities while lowering positi
   if (framedFixture === undefined) throw new Error('Missing corridor fixture at index 2');
   const framed = await command(page, { action: 'landscape/frame', view: framedFixture.id });
   const camera = framed.camera;
-  const lowMetrics = await command(page, {
+  const { before: lowBefore, after: lowMetrics } = await commandSnapshot(page, {
     action: 'landscape/set-settings',
     settings: { density: 'low', motion: 'standard' },
   });
+  const beforeLow = landscape(lowBefore);
   const low = landscape(lowMetrics);
   expect(low.settings).toEqual({ density: 'low', motion: 'standard' });
+  expect(low.motion.amplitude).toBe(0);
+  expect(lowMetrics.runtime.rebuilds).toBe(lowBefore.runtime.rebuilds + 1);
+  expect(lowMetrics.runtime.renders).toBe(lowBefore.runtime.renders + 1);
   expect(lowMetrics.camera).toEqual(camera);
+  expect(low.renderInfo.calls).toBeGreaterThan(0);
+  expect(low.renderInfo.triangles).toBeGreaterThan(0);
+  expect(low.renderInfo).not.toEqual(beforeLow.renderInfo);
+  expect(low.renderInfo.calls).toBeLessThanOrEqual(beforeLow.renderInfo.calls);
+  expect(low.renderInfo.triangles).toBeLessThan(beforeLow.renderInfo.triangles);
   expect(low.identities).toEqual(high.identities);
   expect(low.active).toEqual(low.densityCounts.low);
   expect(low.active.identityInstances).toBeGreaterThanOrEqual(10);
@@ -193,7 +244,6 @@ test('freeze is deterministic and malformed landscape commands are inert', async
   await page.waitForTimeout(80);
   expect(landscape(await readMetrics(page)).motion).toMatchObject({ time: 7.25, transformChecksum: checksum });
 
-  const baseline = await readMetrics(page);
   for (const malformed of [
     { action: 'landscape/set-settings', settings: { density: 'auto', motion: 'standard' } },
     { action: 'landscape/set-settings', settings: { density: 'low', motion: 'windy' } },
@@ -201,9 +251,15 @@ test('freeze is deterministic and malformed landscape commands are inert', async
     { action: 'landscape/freeze-time', time: 'now' },
     { action: 'landscape/frame', view: 'not-a-corridor' },
   ] as const) {
-    const after = await command(page, malformed);
-    expect(landscape(after)).toEqual(landscape(baseline));
-    expect(after.camera).toEqual(baseline.camera);
+    const { before, after } = await commandSnapshot(page, malformed);
+    expect(after.runtime.rebuilds).toBe(before.runtime.rebuilds);
+    expect(after.runtime.renders).toBe(before.runtime.renders);
+    expect(after.resources.resources).toBe(before.resources.resources);
+    expect(after.resources.references).toBe(before.resources.references);
+    expect(after.resources.groups).toBe(before.resources.groups);
+    expect(after.resources.disposed).toBe(before.resources.disposed);
+    expect(after.camera).toEqual(before.camera);
+    expect(landscape(after)).toEqual(landscape(before));
   }
 });
 

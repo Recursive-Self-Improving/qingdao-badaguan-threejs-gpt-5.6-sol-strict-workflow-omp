@@ -66,12 +66,37 @@ const HASH_OFFSET = 0x811c9dc5;
 const HASH_PRIME = 0x01000193;
 const CRAPE_MYRTLE_IDENTITY_CANOPY_SCALE = 0.82;
 const CRAPE_MYRTLE_NON_IDENTITY_CANOPY_SCALE = 0.45;
+const WARM_CANOPY_TINT = '#eee5d6';
+const SHAOGUAN_PEACH_TINT_PATTERN = Object.freeze([0.12, 0.22, 0.32] as const);
+const JIAYUGUAN_MAPLE_FOLIAGE_PATTERN = Object.freeze(['#9b4b2e', '#bd6b2f'] as const);
+const AVENUE_PLANE_CROWN_BLEND_PATTERN = Object.freeze([0.08, 0.48, 0.84] as const);
+const AVENUE_PLANE_CROWN_SCALE_CEILING_PATTERN = Object.freeze([0.96, 1, 0.98, 1.02] as const);
+const AVENUE_PLANE_CROWN_HEIGHT_RATIO = 0.88;
+const AVENUE_PLANE_TRUNK_TINT = 0.72;
+const AVENUE_PLANE_TRUNK_HEIGHT_SCALE = 1.35;
+const AVENUE_PLANE_TRUNK_RADIUS_SCALE = 1.14;
+const AVENUE_FOREIGN_NONIDENTITY_CLEARANCE = 21;
+const WUSHENG_PRIORITY_CADENCE = Object.freeze([
+  Object.freeze({ id: 'cadence-mid', centerlineZ: -150, vergeOffset: 13.25, sequence: 1, side: 'west' }),
+  Object.freeze({ id: 'cadence-north', centerlineZ: -244, vergeOffset: 14, sequence: 2, side: 'west' }),
+] as const);
+const SHANHAIGUAN_PRIORITY_CADENCE = Object.freeze([
+  Object.freeze({ id: 'cadence-south', centerlineZ: -58, vergeOffset: 13.25, sequence: 0, side: 'west' }),
+  Object.freeze({ id: 'cadence-mid-south', centerlineZ: -100, vergeOffset: 13.5, sequence: 1, side: 'east' }),
+  Object.freeze({ id: 'cadence-mid-north', centerlineZ: -195, vergeOffset: 13.5, sequence: 2, side: 'west' }),
+  Object.freeze({ id: 'cadence-north', centerlineZ: -245, vergeOffset: 13.75, sequence: 3, side: 'east' }),
+] as const);
+const ACTIVE_LOD_BAND_ID = 'near' as const;
 
 export type VegetationTier = 'identity' | 'infill' | 'accent';
 export type VegetationCanopyForm = 'broad' | 'upright' | 'conifer' | 'columnar';
 
 type VegetationGeometryId = 'trunk' | VegetationCanopyForm | 'accent';
-type VegetationMaterialId = 'trunk-palette' | 'foliage-palette' | 'accent-palette';
+type VegetationMaterialId =
+  | 'trunk-palette'
+  | 'avenue-plane-trunk-palette'
+  | 'foliage-palette'
+  | 'accent-palette';
 type VergeSide = PlantingZone['side'];
 
 export interface VegetationLayoutInstance {
@@ -100,12 +125,13 @@ export interface VegetationLayoutInstance {
   readonly foliageColor: string;
   readonly accentColor: string;
   readonly litterColor: string | null;
-  readonly clearanceBounds: Bounds2;
+  readonly clearanceBound: Bounds2;
 }
 
 export interface VegetationLayout {
   readonly density: LandscapeDensity;
   readonly policy: VegetationLodPolicy;
+  readonly activeLodBand: 'near';
   readonly instances: readonly VegetationLayoutInstance[];
   readonly evaluatedCandidates: number;
   readonly rejectedCandidates: number;
@@ -239,6 +265,17 @@ function hashUnit(value: string): number {
   return hashString(value) / 0x1_0000_0000;
 }
 
+function mixHexColors(from: string, to: string, amount: number): string {
+  const fromValue = Number.parseInt(from.slice(1), 16);
+  const toValue = Number.parseInt(to.slice(1), 16);
+  const mix = Math.min(1, Math.max(0, amount));
+  const inverse = 1 - mix;
+  const red = Math.round(((fromValue >>> 16) & 0xff) * inverse + ((toValue >>> 16) & 0xff) * mix);
+  const green = Math.round(((fromValue >>> 8) & 0xff) * inverse + ((toValue >>> 8) & 0xff) * mix);
+  const blue = Math.round((fromValue & 0xff) * inverse + (toValue & 0xff) * mix);
+  return `#${((red << 16) | (green << 8) | blue).toString(16).padStart(6, '0')}`;
+}
+
 function immutableVec2(point: Vec2): Vec2 {
   return Object.freeze({ x: point.x, z: point.z });
 }
@@ -316,6 +353,23 @@ function sampleRoad(path: RoadPath, distance: number): PolylineSample {
     },
     tangent: segment.tangent,
   };
+}
+
+function sampleRoadAtZ(path: RoadPath, targetZ: number): PolylineSample {
+  for (const segment of path.segments) {
+    const deltaZ = segment.to.z - segment.from.z;
+    if (Math.abs(deltaZ) <= Number.EPSILON) continue;
+    const fraction = (targetZ - segment.from.z) / deltaZ;
+    if (fraction < 0 || fraction > 1) continue;
+    return {
+      position: {
+        x: segment.from.x + (segment.to.x - segment.from.x) * fraction,
+        z: targetZ,
+      },
+      tangent: segment.tangent,
+    };
+  }
+  throw new RangeError(`Road "${path.road.id}" does not cross requested z ${targetZ}.`);
 }
 
 function nearestRoadSample(path: RoadPath, point: Vec2): NearestPolylineSample {
@@ -440,36 +494,73 @@ function candidateBounds(position: Vec2, radius: number): Bounds2 {
 function createLayoutInstance(spec: CandidateSpec): VegetationLayoutInstance {
   const recipe = SPECIES_RECIPES[spec.cue.species];
   const identityScale = spec.tier === 'identity' ? 1.08 : spec.tier === 'accent' ? 0.86 : 1;
-  const variation = identityScale * (0.92 + hashUnit(`${spec.id}:scale`) * 0.16);
+  const authoredVariation = identityScale * (0.92 + hashUnit(`${spec.id}:scale`) * 0.16);
+  const isShaoguanPeachInfill = spec.cue.roadId === 'shaoguan'
+    && spec.cue.species === 'peach'
+    && spec.tier !== 'identity';
+  const isJiayuguanMapleNonidentity = spec.cue.roadId === 'jiayuguan'
+    && spec.cue.species === 'maple'
+    && spec.tier !== 'identity';
+  const isAvenuePlane = (spec.cue.roadId === 'wushengguan' || spec.cue.roadId === 'shanhaiguan')
+    && spec.cue.species === 'plane-tree';
+  const planeScaleCeiling = AVENUE_PLANE_CROWN_SCALE_CEILING_PATTERN[
+    spec.sequence % AVENUE_PLANE_CROWN_SCALE_CEILING_PATTERN.length
+  ] ?? 1;
+  const visualVariation = isAvenuePlane
+    ? Math.min(authoredVariation, planeScaleCeiling)
+    : authoredVariation;
   const canopyMultiplier = spec.cue.species !== 'crape-myrtle'
     ? 1
     : spec.tier === 'identity'
       ? CRAPE_MYRTLE_IDENTITY_CANOPY_SCALE
       : CRAPE_MYRTLE_NON_IDENTITY_CANOPY_SCALE;
+  const canopyHeightRatio = isAvenuePlane ? AVENUE_PLANE_CROWN_HEIGHT_RATIO : 1;
   const canopyScale = Object.freeze([
-    recipe.canopyScale[0] * variation * canopyMultiplier,
-    recipe.canopyScale[1] * variation * canopyMultiplier,
-    recipe.canopyScale[2] * variation * canopyMultiplier,
+    recipe.canopyScale[0] * visualVariation * canopyMultiplier,
+    recipe.canopyScale[1] * visualVariation * canopyMultiplier * canopyHeightRatio,
+    recipe.canopyScale[2] * visualVariation * canopyMultiplier,
   ] as [number, number, number]);
-  const trunkHeight = recipe.trunkHeight * variation;
-  const accentScale = recipe.accentScale * variation;
+  const trunkHeight = recipe.trunkHeight * authoredVariation
+    * (isAvenuePlane ? AVENUE_PLANE_TRUNK_HEIGHT_SCALE : 1);
+  const trunkRadius = recipe.trunkRadius * authoredVariation
+    * (isAvenuePlane ? AVENUE_PLANE_TRUNK_RADIUS_SCALE : 1);
+  const accentScale = recipe.accentScale * visualVariation;
   const accentDirection = hashUnit(`${spec.id}:accent-side`) < 0.5 ? -1 : 1;
   const accentOffset = immutableVec2({
-    x: (spec.tangent.x * 0.55 - spec.tangent.z * 0.34) * accentDirection * variation,
-    z: (spec.tangent.z * 0.55 + spec.tangent.x * 0.34) * accentDirection * variation,
+    x: (spec.tangent.x * 0.55 - spec.tangent.z * 0.34) * accentDirection * visualVariation,
+    z: (spec.tangent.z * 0.55 + spec.tangent.x * 0.34) * accentDirection * visualVariation,
   });
-  const authoredCanopyRadius = Math.max(recipe.canopyScale[0], recipe.canopyScale[2]) * variation;
+  const authoredCanopyRadius = Math.max(recipe.canopyScale[0], recipe.canopyScale[2]) * authoredVariation;
   const clearanceRadius = Math.max(
     authoredCanopyRadius,
     Math.abs(accentOffset.x) + accentScale,
     Math.abs(accentOffset.z) + accentScale,
   ) + WIND_CLEARANCE_PADDING;
   const foliageIndex = Math.floor(hashUnit(`${spec.id}:foliage`) * spec.cue.palette.foliage.length);
-  const accentColor = spec.cue.palette.foliage[spec.cue.palette.foliage.length - 1]
-    ?? spec.cue.palette.foliage[0];
-  const foliageColor = spec.cue.species === 'crape-myrtle' && spec.tier === 'identity'
+  const paletteStart = spec.cue.palette.foliage[0];
+  const accentColor = spec.cue.palette.foliage[spec.cue.palette.foliage.length - 1] ?? paletteStart;
+  const authoredFoliageColor = spec.cue.species === 'crape-myrtle' && spec.tier === 'identity'
     ? accentColor
-    : spec.cue.palette.foliage[foliageIndex] ?? spec.cue.palette.foliage[0];
+    : spec.cue.palette.foliage[foliageIndex] ?? paletteStart;
+  const peachTint = SHAOGUAN_PEACH_TINT_PATTERN[
+    spec.sequence % SHAOGUAN_PEACH_TINT_PATTERN.length
+  ] ?? SHAOGUAN_PEACH_TINT_PATTERN[0];
+  const planeBlend = AVENUE_PLANE_CROWN_BLEND_PATTERN[
+    spec.sequence % AVENUE_PLANE_CROWN_BLEND_PATTERN.length
+  ] ?? AVENUE_PLANE_CROWN_BLEND_PATTERN[0];
+  const mapleFoliageColor = JIAYUGUAN_MAPLE_FOLIAGE_PATTERN[
+    spec.sequence % JIAYUGUAN_MAPLE_FOLIAGE_PATTERN.length
+  ] ?? JIAYUGUAN_MAPLE_FOLIAGE_PATTERN[0];
+  const foliageColor = isJiayuguanMapleNonidentity
+    ? mapleFoliageColor
+    : isShaoguanPeachInfill
+      ? mixHexColors(accentColor, WARM_CANOPY_TINT, peachTint)
+      : isAvenuePlane
+        ? mixHexColors(paletteStart, accentColor, planeBlend)
+        : authoredFoliageColor;
+  const trunkColor = isAvenuePlane
+    ? mixHexColors(spec.cue.palette.trunk, WARM_CANOPY_TINT, AVENUE_PLANE_TRUNK_TINT)
+    : spec.cue.palette.trunk;
   return Object.freeze({
     id: spec.id,
     roadId: spec.cue.roadId,
@@ -484,7 +575,7 @@ function createLayoutInstance(spec: CandidateSpec): VegetationLayoutInstance {
     vergeOffset: spec.vergeOffset,
     canopyForm: recipe.canopyForm,
     trunkHeight,
-    trunkRadius: recipe.trunkRadius * variation,
+    trunkRadius,
     canopyCenterHeight: trunkHeight + canopyScale[1] * 0.12,
     canopyScale,
     accentScale,
@@ -492,16 +583,21 @@ function createLayoutInstance(spec: CandidateSpec): VegetationLayoutInstance {
     rotationY: hashUnit(`${spec.id}:rotation`) * Math.PI * 2,
     windPhase: hashUnit(`${spec.id}:phase`) * Math.PI * 2,
     windFrequency: 0.31 + hashUnit(`${spec.id}:frequency`) * 0.17,
-    trunkColor: spec.cue.palette.trunk,
+    trunkColor,
     foliageColor,
     accentColor,
     litterColor: spec.cue.palette.litter,
-    clearanceBounds: immutableBounds(candidateBounds(spec.position, clearanceRadius)),
+    clearanceBound: immutableBounds(candidateBounds(spec.position, clearanceRadius)),
   });
 }
 
+function usesAvenuePlaneTrunk(instance: VegetationLayoutInstance): boolean {
+  return (instance.roadId === 'wushengguan' || instance.roadId === 'shanhaiguan')
+    && instance.species === 'plane-tree';
+}
+
 function clearanceRadius(instance: VegetationLayoutInstance): number {
-  return (instance.clearanceBounds.maxX - instance.clearanceBounds.minX) * 0.5;
+  return (instance.clearanceBound.maxX - instance.clearanceBound.minX) * 0.5;
 }
 
 function candidateIsClear(
@@ -513,7 +609,7 @@ function candidateIsClear(
   minimumRoadClearance: number,
 ): boolean {
   const radius = clearanceRadius(candidate);
-  const bounds = candidate.clearanceBounds;
+  const bounds = candidate.clearanceBound;
   if (bounds.minX < data.worldBounds.minX || bounds.maxX > data.worldBounds.maxX
     || bounds.minZ < data.worldBounds.minZ || bounds.maxZ > data.worldBounds.maxZ) return false;
 
@@ -523,7 +619,12 @@ function candidateIsClear(
 
   for (const path of roadPaths.values()) {
     if (path.road.id === owningPath.road.id) continue;
-    const corridorPadding = path.road.width * 0.5 + path.road.sidewalkWidth + 0.5;
+    const protectsAvenue = (path.road.id === 'wushengguan' || path.road.id === 'shanhaiguan')
+      && owningPath.road.id !== path.road.id
+      && !candidate.identity;
+    const corridorPadding = protectsAvenue
+      ? AVENUE_FOREIGN_NONIDENTITY_CLEARANCE
+      : path.road.width * 0.5 + path.road.sidewalkWidth + 0.5;
     if (polylineIntersectsBounds(path.points, expandedBounds(bounds, corridorPadding))) return false;
   }
 
@@ -735,10 +836,65 @@ function buildMasterLayout(data: DistrictData): LayoutPlan {
     identities.push(identity);
   }
 
+  const wushengCue = cues.get('wushengguan');
+  const wushengPath = roadPaths.get('wushengguan');
+  if (wushengCue === undefined || wushengPath === undefined) {
+    throw new RangeError('Missing Wushengguan inputs for the plane-tree cadence.');
+  }
+  for (const station of WUSHENG_PRIORITY_CADENCE) {
+    const sample = sampleRoadAtZ(wushengPath, station.centerlineZ);
+    const normal = normalForSide(sample.tangent, station.side);
+    const instance = tryCandidate({
+      id: `vegetation:wushengguan:infill:${station.id}`,
+      cue: wushengCue,
+      tier: 'infill',
+      position: {
+        x: sample.position.x + normal.x * station.vergeOffset,
+        z: sample.position.z + normal.z * station.vergeOffset,
+      },
+      tangent: sample.tangent,
+      vergeSide: station.side,
+      vergeOffset: station.vergeOffset,
+      sequence: station.sequence,
+    }, wushengPath, MINIMUM_VERGE_OFFSET);
+    if (instance === null) {
+      throw new RangeError(`Could not place Wushengguan priority station "${station.id}".`);
+    }
+    infill.push(instance);
+  }
+
+  const shanhaiguanCue = cues.get('shanhaiguan');
+  const shanhaiguanPath = roadPaths.get('shanhaiguan');
+  if (shanhaiguanCue === undefined || shanhaiguanPath === undefined) {
+    throw new RangeError('Missing Shanhaiguan inputs for the plane-tree cadence.');
+  }
+  for (const station of SHANHAIGUAN_PRIORITY_CADENCE) {
+    const sample = sampleRoadAtZ(shanhaiguanPath, station.centerlineZ);
+    const normal = normalForSide(sample.tangent, station.side);
+    const instance = tryCandidate({
+      id: `vegetation:shanhaiguan:infill:${station.id}`,
+      cue: shanhaiguanCue,
+      tier: 'infill',
+      position: {
+        x: sample.position.x + normal.x * station.vergeOffset,
+        z: sample.position.z + normal.z * station.vergeOffset,
+      },
+      tangent: sample.tangent,
+      vergeSide: station.side,
+      vergeOffset: station.vergeOffset,
+      sequence: station.sequence,
+    }, shanhaiguanPath, MINIMUM_VERGE_OFFSET);
+    if (instance === null) {
+      throw new RangeError(`Could not place Shanhaiguan priority station "${station.id}".`);
+    }
+    infill.push(instance);
+  }
+
   for (const roadId of roadOrder) {
     const cue = cues.get(roadId);
     const path = roadPaths.get(roadId);
     if (cue === undefined || path === undefined) continue;
+    if (roadId === 'shanhaiguan') continue;
     const usableLength = Math.max(0, path.totalLength - SAMPLE_END_MARGIN * 2);
     const sampleCount = Math.max(1, Math.floor(usableLength / MASTER_SAMPLE_SPACING));
     let sequence = 0;
@@ -838,6 +994,7 @@ export function createVegetationLayout(
   return Object.freeze({
     density,
     policy: freezePolicy(policy),
+    activeLodBand: ACTIVE_LOD_BAND_ID,
     instances: selectInstances(plan, density),
     evaluatedCandidates: plan.evaluatedCandidates,
     rejectedCandidates: plan.rejectedCandidates,
@@ -851,25 +1008,35 @@ function geometryTriangleCount(geometry: BufferGeometry): number {
 }
 
 
+interface VegetationGeometryRecipe {
+  readonly radialSegments: number;
+  readonly broadHeightSegments: number;
+  readonly accentWidthSegments: number;
+  readonly accentHeightSegments: number;
+}
+
+/** C06 renders the active near topology; camera-distance band switching remains the published C11 seam. */
+function geometryRecipe(policy: VegetationLodPolicy): VegetationGeometryRecipe {
+  const radialSegments = policy.bands.find(({ id }) => id === ACTIVE_LOD_BAND_ID)?.canopySegments ?? 5;
+  return {
+    radialSegments,
+    broadHeightSegments: Math.max(4, Math.floor(radialSegments * 0.6)),
+    accentWidthSegments: Math.max(5, radialSegments - 2),
+    accentHeightSegments: Math.max(3, Math.floor(radialSegments * 0.45)),
+  };
+}
+
 function predictedGeometryTriangles(
   geometryId: VegetationGeometryId,
-  policy: VegetationLodPolicy,
+  recipe: VegetationGeometryRecipe,
 ): number {
-  const segments = policy.bands[0]?.canopySegments ?? 5;
   switch (geometryId) {
-    case 'trunk': return segments * 4;
+    case 'trunk': return recipe.radialSegments * 4;
     case 'broad':
-    case 'upright': {
-      const heightSegments = Math.max(4, Math.floor(segments * 0.6));
-      return 2 * segments * (heightSegments - 1);
-    }
-    case 'conifer': return segments * 3;
-    case 'columnar': return segments * 4;
-    case 'accent': {
-      const widthSegments = Math.max(5, segments - 2);
-      const heightSegments = Math.max(3, Math.floor(segments * 0.45));
-      return 2 * widthSegments * (heightSegments - 1);
-    }
+    case 'upright': return 2 * recipe.radialSegments * (recipe.broadHeightSegments - 1);
+    case 'conifer': return recipe.radialSegments * 2;
+    case 'columnar': return recipe.radialSegments * 4;
+    case 'accent': return 2 * recipe.accentWidthSegments * (recipe.accentHeightSegments - 1);
   }
 }
 
@@ -878,23 +1045,20 @@ function createSharedGeometries(
   group: string,
   policy: VegetationLodPolicy,
 ): ReadonlyMap<VegetationGeometryId, BufferGeometry> {
-  const segments = policy.bands[0]?.canopySegments ?? 5;
-  const broadHeightSegments = Math.max(4, Math.floor(segments * 0.6));
-  const accentWidthSegments = Math.max(5, segments - 2);
-  const accentHeightSegments = Math.max(3, Math.floor(segments * 0.45));
-  const trunk = new CylinderGeometry(0.5, 0.62, 1, segments);
+  const recipe = geometryRecipe(policy);
+  const trunk = new CylinderGeometry(0.5, 0.62, 1, recipe.radialSegments);
   trunk.translate(0, 0.5, 0);
   const definitions: readonly (readonly [VegetationGeometryId, BufferGeometry])[] = [
     ['trunk', trunk],
-    ['broad', new SphereGeometry(1, segments, broadHeightSegments)],
-    ['upright', new SphereGeometry(1, segments, broadHeightSegments)],
-    ['conifer', new ConeGeometry(1, 2, segments)],
-    ['columnar', new CylinderGeometry(0.56, 0.82, 2, segments)],
-    ['accent', new SphereGeometry(1, accentWidthSegments, accentHeightSegments)],
+    ['broad', new SphereGeometry(1, recipe.radialSegments, recipe.broadHeightSegments)],
+    ['upright', new SphereGeometry(1, recipe.radialSegments, recipe.broadHeightSegments)],
+    ['conifer', new ConeGeometry(1, 2, recipe.radialSegments)],
+    ['columnar', new CylinderGeometry(0.56, 0.82, 2, recipe.radialSegments)],
+    ['accent', new SphereGeometry(1, recipe.accentWidthSegments, recipe.accentHeightSegments)],
   ];
   const geometries = new Map<VegetationGeometryId, BufferGeometry>();
   for (const [geometryId, geometry] of definitions) {
-    geometry.name = `vegetation:${geometryId}`;
+    geometry.name = `vegetation:${geometryId}:${ACTIVE_LOD_BAND_ID}`;
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
     geometries.set(geometryId, resources.register(geometry, group));
@@ -908,6 +1072,7 @@ function createSharedMaterials(
 ): ReadonlyMap<VegetationMaterialId, MeshBasicMaterial> {
   const definitions: readonly (readonly [VegetationMaterialId, string])[] = [
     ['trunk-palette', 'vegetation:trunk-palette'],
+    ['avenue-plane-trunk-palette', 'vegetation:avenue-plane-trunk-palette'],
     ['foliage-palette', 'vegetation:foliage-palette'],
     ['accent-palette', 'vegetation:accent-palette'],
   ];
@@ -1002,6 +1167,8 @@ function createRenderBatches(
     instance,
     groundHeight: sampleGroundHeight(instance.position.x, instance.position.z),
   }));
+  const avenuePlaneTrunks = grounded.filter(({ instance }) => usesAvenuePlaneTrunk(instance));
+  const standardTrunks = grounded.filter(({ instance }) => !usesAvenuePlaneTrunk(instance));
   const batchDefinitions: readonly {
     readonly id: string;
     readonly geometryId: VegetationGeometryId;
@@ -1009,7 +1176,14 @@ function createRenderBatches(
     readonly items: readonly RenderBatchItem[];
     readonly dynamic: boolean;
   }[] = [
-    { id: 'trunks', geometryId: 'trunk', materialId: 'trunk-palette', items: grounded, dynamic: false },
+    { id: 'trunks', geometryId: 'trunk', materialId: 'trunk-palette', items: standardTrunks, dynamic: false },
+    {
+      id: 'trunks:avenue-plane-pale',
+      geometryId: 'trunk',
+      materialId: 'avenue-plane-trunk-palette',
+      items: avenuePlaneTrunks,
+      dynamic: false,
+    },
     ...(['broad', 'upright', 'conifer', 'columnar'] as const).map((form) => ({
       id: `canopies:${form}`,
       geometryId: form,
@@ -1033,7 +1207,7 @@ function createRenderBatches(
     const geometry = requireMapValue(geometries, definition.geometryId, 'geometry');
     const material = requireMapValue(materials, definition.materialId, 'material');
     const mesh = resources.register(new InstancedMesh(geometry, material, definition.items.length), group);
-    mesh.name = `vegetation:instances:${definition.id}`;
+    mesh.name = `vegetation:instances:${ACTIVE_LOD_BAND_ID}:${definition.id}`;
     mesh.userData.collidable = false;
     if (definition.dynamic) mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     for (let index = 0; index < definition.items.length; index += 1) {
@@ -1070,14 +1244,17 @@ function densityMetric(
   policy: VegetationLodPolicy,
   actualGeometryTriangles?: ReadonlyMap<VegetationGeometryId, number>,
 ): LandscapeDensityMetrics {
+  const recipe = geometryRecipe(policy);
   const forms = new Set<VegetationCanopyForm>();
   let triangles = 0;
   let accentInstances = 0;
+  let hasAvenuePlaneTrunks = false;
   const triangleCount = (geometryId: VegetationGeometryId): number =>
-    actualGeometryTriangles?.get(geometryId) ?? predictedGeometryTriangles(geometryId, policy);
+    actualGeometryTriangles?.get(geometryId) ?? predictedGeometryTriangles(geometryId, recipe);
   for (const instance of instances) {
     forms.add(instance.canopyForm);
     triangles += triangleCount('trunk') + triangleCount(instance.canopyForm);
+    if (usesAvenuePlaneTrunk(instance)) hasAvenuePlaneTrunks = true;
     if (instance.tier === 'accent') {
       accentInstances += 1;
       triangles += triangleCount('accent');
@@ -1087,7 +1264,9 @@ function densityMetric(
     vegetationInstances: instances.length,
     identityInstances: instances.filter((instance) => instance.identity).length,
     detailInstances: 0,
-    drawCalls: instances.length === 0 ? 0 : 1 + forms.size + (accentInstances > 0 ? 1 : 0),
+    drawCalls: instances.length === 0
+      ? 0
+      : 1 + forms.size + (hasAvenuePlaneTrunks ? 1 : 0) + (accentInstances > 0 ? 1 : 0),
     triangles,
   });
 }
@@ -1158,6 +1337,7 @@ export function createVegetation(
   const layout: VegetationLayout = Object.freeze({
     density: immutableSettings.density,
     policy: freezePolicy(policy),
+    activeLodBand: ACTIVE_LOD_BAND_ID,
     instances: activeInstances,
     evaluatedCandidates: plan.evaluatedCandidates,
     rejectedCandidates: plan.rejectedCandidates,
@@ -1178,7 +1358,7 @@ export function createVegetation(
     id: instance.id,
     roadId: instance.roadId,
     kind: 'vegetation',
-    bounds: immutableBounds(instance.clearanceBounds),
+    bounds: immutableBounds(instance.clearanceBound),
   })));
   const cameraViews = cloneCameraViews(data, vegetationBounds);
   const cameraBounds = cameraViews.map((view): LandscapeClearanceBound => Object.freeze({
@@ -1231,15 +1411,19 @@ export function createVegetation(
 
   const dynamicBatches = batches.filter((batch) => batch.dynamic);
   const transform = new TransformObject();
-  const amplitude = immutableSettings.motion === 'reduced' ? 0 : STANDARD_WIND_AMPLITUDE;
+  const amplitude = immutableSettings.motion === 'reduced' || immutableSettings.density === 'low'
+    ? 0
+    : STANDARD_WIND_AMPLITUDE;
   let currentTime = 0;
   let captureTime: number | null = null;
   let transformChecksum = HASH_OFFSET;
   let transformChecksumDirty = true;
+  let dynamicTransformsInitialized = false;
 
   const applyDynamicTransforms = (time: number, force: boolean): void => {
     if (!force && time === currentTime) return;
     currentTime = time;
+    if (amplitude === 0 && dynamicTransformsInitialized) return;
     for (const batch of dynamicBatches) {
       for (let index = 0; index < batch.items.length; index += 1) {
         const item = batch.items[index];
@@ -1251,6 +1435,7 @@ export function createVegetation(
       batch.mesh.instanceMatrix.needsUpdate = true;
     }
     transformChecksumDirty = true;
+    dynamicTransformsInitialized = true;
   };
 
   const currentTransformChecksum = (): number => {

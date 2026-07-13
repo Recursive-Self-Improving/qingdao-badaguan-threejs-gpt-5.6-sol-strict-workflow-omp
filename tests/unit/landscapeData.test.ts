@@ -136,7 +136,7 @@ describe('canonical landscape data', () => {
     expect(Object.keys(VEGETATION_LOD_POLICIES)).toEqual(['high', 'medium', 'low']);
     const policies = [VEGETATION_LOD_POLICIES.high, VEGETATION_LOD_POLICIES.medium, VEGETATION_LOD_POLICIES.low];
     expect(policies.every(({ identityInstancesPerRoad }) => identityInstancesPerRoad === 1)).toBe(true);
-    expect(policies.map(({ infillFraction }) => infillFraction)).toEqual([1, 0.62, 0.28]);
+    expect(policies.map(({ infillFraction }) => infillFraction)).toEqual([1, 0.62, 0]);
     expect(policies.map(({ accentFraction }) => accentFraction)).toEqual([1, 0.5, 0]);
     for (const policy of policies) {
       expect(policy.bands.map(({ id }) => id)).toEqual(['near', 'mid', 'far']);
@@ -198,39 +198,71 @@ describe('canonical landscape data', () => {
     }
   });
 
-  it('provides seven safe representative frames whose road union is exactly ten', () => {
+  it('provides exact10 eye-level one-road frames with each identity cue ahead', () => {
+    const eyeHeightTolerance = 0.001;
+    const corridorTolerance = 0.001;
+    const maximumCueAngle = Math.PI / 9;
+
     expect(LANDSCAPE_CAMERA_VIEWS).toBe(DISTRICT_DATA.landscapeCameraViews);
-    expect(LANDSCAPE_CAMERA_VIEWS).toHaveLength(7);
+    expect(LANDSCAPE_CAMERA_VIEWS).toHaveLength(10);
+    expect(LANDSCAPE_CAMERA_VIEWS.map(({ roadIds }) => roadIds)).toEqual(ROAD_SPECS.map(({ id }) => [id]));
     expect(new Set(LANDSCAPE_CAMERA_VIEWS.flatMap(({ roadIds }) => roadIds))).toEqual(new Set(Object.keys(expectedMapping)));
     expect(LANDSCAPE_CAMERA_VIEWS.map(({ id, position, target, roadIds, ySemantics, clearanceBounds }) => ({
       id, position, target, roadIds, ySemantics, clearanceBounds,
     }))).toEqual([
-      { id: 'southern-flowering-roads', position: [-34, 12, -286], target: [-26, 4, -230], roadIds: ['shaoguan', 'ningwuguan'], ySemantics: 'world', clearanceBounds: { minX: -36, maxX: -32, minZ: -288, maxZ: -284 } },
-      { id: 'cedar-myrtle-roads', position: [-68, 11, -150], target: [-110, 4, -164], roadIds: ['zijingguan', 'zhengyangguan'], ySemantics: 'world', clearanceBounds: { minX: -70, maxX: -66, minZ: -152, maxZ: -148 } },
-      { id: 'autumn-maple-road', position: [104, 10, -105], target: [150, 4, -80], roadIds: ['jiayuguan'], ySemantics: 'world', clearanceBounds: { minX: 102, maxX: 106, minZ: -107, maxZ: -103 } },
-      { id: 'autumn-ginkgo-road', position: [-72, 10, -92], target: [-72, 4, -35], roadIds: ['juyongguan'], ySemantics: 'world', clearanceBounds: { minX: -74, maxX: -70, minZ: -94, maxZ: -90 } },
-      { id: 'shore-juniper-road', position: [170, 9, -18], target: [150, 4, 10], roadIds: ['linhuaiguan'], ySemantics: 'world', clearanceBounds: { minX: 168, maxX: 172, minZ: -20, maxZ: -16 } },
-      { id: 'western-plane-road', position: [-50, 11, -155], target: [-120, 4, -154], roadIds: ['wushengguan'], ySemantics: 'world', clearanceBounds: { minX: -52, maxX: -48, minZ: -157, maxZ: -153 } },
-      { id: 'central-eastern-plane-roads', position: [-30, 12, -238], target: [65, 4, -190], roadIds: ['hangu-pass', 'shanhaiguan'], ySemantics: 'world', clearanceBounds: { minX: -32, maxX: -28, minZ: -240, maxZ: -236 } },
+      { id: 'shaoguan-peach-road', position: [-195, 6.601323, -267.5], target: [-100, 6.511238, -267.5], roadIds: ['shaoguan'], ySemantics: 'world', clearanceBounds: { minX: -197, maxX: -193, minZ: -269.5, maxZ: -265.5 } },
+      { id: 'ningwuguan-crabapple-road', position: [74.826969, 5.709407, -210.386612], target: [159.826969, 5.581, -208.425073], roadIds: ['ningwuguan'], ySemantics: 'world', clearanceBounds: { minX: 72.826969, maxX: 76.826969, minZ: -212.386612, maxZ: -208.386612 } },
+      { id: 'zijingguan-cedar-road', position: [-145, 4.900335, -177.5], target: [-50, 4.88297, -177.5], roadIds: ['zijingguan'], ySemantics: 'world', clearanceBounds: { minX: -147, maxX: -143, minZ: -179.5, maxZ: -175.5 } },
+      { id: 'zhengyangguan-myrtle-road', position: [-150.214198, 4.196145, -133.925512], target: [-65.214198, 4.243663, -136.354084], roadIds: ['zhengyangguan'], ySemantics: 'world', clearanceBounds: { minX: -152.214198, maxX: -148.214198, minZ: -135.925512, maxZ: -131.925512 } },
+      { id: 'jiayuguan-maple-road', position: [-100, 3.363676, -80], target: [-20, 3.262565, -80], roadIds: ['jiayuguan'], ySemantics: 'world', clearanceBounds: { minX: -102, maxX: -98, minZ: -82, maxZ: -78 } },
+      { id: 'juyongguan-ginkgo-road', position: [-140, 2.596319, -41], target: [-55, 2.604859, -40.4375], roadIds: ['juyongguan'], ySemantics: 'world', clearanceBounds: { minX: -142, maxX: -138, minZ: -43, maxZ: -39 } },
+      { id: 'linhuaiguan-juniper-road', position: [105, 1.716736, 2.5], target: [185, 1.725409, 2.5], roadIds: ['linhuaiguan'], ySemantics: 'world', clearanceBounds: { minX: 103, maxX: 107, minZ: 0.5, maxZ: 4.5 } },
+      { id: 'wushengguan-plane-road', position: [-112, 2.309214, -25], target: [-107, 5.486047, -215], roadIds: ['wushengguan'], ySemantics: 'world', clearanceBounds: { minX: -114, maxX: -110, minZ: -27, maxZ: -23 } },
+      { id: 'hangu-pass-plane-road', position: [7.5, 6.285604, -250], target: [13, 5.801318, -222], roadIds: ['hangu-pass'], ySemantics: 'world', clearanceBounds: { minX: 5.5, maxX: 9.5, minZ: -252, maxZ: -248 } },
+      { id: 'shanhaiguan-plane-road', position: [128, 4.17913, -135], target: [135, 4.691962, -160], roadIds: ['shanhaiguan'], ySemantics: 'world', clearanceBounds: { minX: 126, maxX: 130, minZ: -137, maxZ: -133 } },
     ]);
-    expect(new Set(LANDSCAPE_CAMERA_VIEWS.map(({ id }) => id)).size).toBe(7);
+    expect(new Set(LANDSCAPE_CAMERA_VIEWS.map(({ id }) => id)).size).toBe(10);
     for (const view of LANDSCAPE_CAMERA_VIEWS) {
+      const cameraPoint = { x: view.position[0], z: view.position[2] };
+      const targetPoint = { x: view.target[0], z: view.target[2] };
+      const roadId = view.roadIds[0];
+      const road = ROAD_SPECS.find(({ id }) => id === roadId);
+      const zone = PLANTING_ZONES.find(({ roadId: zoneRoadId }) => zoneRoadId === roadId);
+      expect(view.roadIds).toHaveLength(1);
+      expect(road).toBeDefined();
+      expect(zone).toBeDefined();
+      if (road === undefined || zone === undefined) throw new Error(`Missing road or cue zone for ${view.id}`);
+      const roadPoints = [road.centerline.from, ...road.centerline.via, road.centerline.to];
+      const corridorRadius = road.width * 0.5 + road.sidewalkWidth + corridorTolerance;
+      const cuePoint = { x: (zone.bounds.minX + zone.bounds.maxX) * 0.5, z: (zone.bounds.minZ + zone.bounds.maxZ) * 0.5 };
+      const forward = { x: targetPoint.x - cameraPoint.x, z: targetPoint.z - cameraPoint.z };
+      const toCue = { x: cuePoint.x - cameraPoint.x, z: cuePoint.z - cameraPoint.z };
+      const forwardLength = Math.hypot(forward.x, forward.z);
+      const cueDistance = Math.hypot(toCue.x, toCue.z);
+      const cueCosine = Math.max(-1, Math.min(1, (forward.x * toCue.x + forward.z * toCue.z) / (forwardLength * cueDistance)));
+      const shortBlockView = view.id === 'hangu-pass-plane-road' || view.id === 'shanhaiguan-plane-road';
+      const minimumForwardLength = shortBlockView ? 20 : 60;
+      const minimumCueDistance = shortBlockView ? 8 : 20;
+      const maximumCueDistance = view.id === 'jiayuguan-maple-road' ? 260 : 90;
+
       expect(view.clearanceIntersections).toBe(0);
       expect(view.ySemantics).toBe('world');
       expect([...view.position, ...view.target].every(Number.isFinite)).toBe(true);
-      expect(view.position[1]).toBeGreaterThan(0);
-      expect(view.position[1] - sampleGroundHeight(view.position[0], view.position[2]), `${view.id} camera height above terrain`).toBeGreaterThanOrEqual(APP_CONFIG.camera.eyeHeight);
-      expect(view.roadIds.length).toBeGreaterThan(0);
-      expect(view.roadIds.every((roadId) => roadId in expectedMapping)).toBe(true);
-      expect(view.clearanceBounds.maxX - view.clearanceBounds.minX, `${view.id} camera diameter`).toBeGreaterThanOrEqual(4);
-      expect(view.clearanceBounds.maxZ - view.clearanceBounds.minZ, `${view.id} camera diameter`).toBeGreaterThanOrEqual(4);
+      expect(Math.abs(view.position[1] - sampleGroundHeight(cameraPoint.x, cameraPoint.z) - APP_CONFIG.camera.eyeHeight), `${view.id} camera eye height`).toBeLessThanOrEqual(eyeHeightTolerance);
+      expect(Math.abs(view.target[1] - sampleGroundHeight(targetPoint.x, targetPoint.z) - APP_CONFIG.camera.eyeHeight), `${view.id} target eye height`).toBeLessThanOrEqual(eyeHeightTolerance);
+      expect(polylineDistance(cameraPoint, roadPoints), `${view.id} camera own road/sidewalk corridor`).toBeLessThanOrEqual(corridorRadius);
+      expect(polylineDistance(targetPoint, roadPoints), `${view.id} target road-and-cue corridor`).toBeLessThanOrEqual(Math.max(corridorRadius, zone.minimumRoadClearance + 4));
+      expect(forwardLength, `${view.id} forward corridor length`).toBeGreaterThanOrEqual(minimumForwardLength);
+      expect(cueDistance, `${view.id} cue distance`).toBeGreaterThanOrEqual(minimumCueDistance);
+      expect(cueDistance, `${view.id} cue distance`).toBeLessThanOrEqual(maximumCueDistance);
+      expect(Math.acos(cueCosine), `${view.id} identity cue angle`).toBeLessThanOrEqual(maximumCueAngle);
+      expect(view.clearanceBounds.maxX - view.clearanceBounds.minX, `${view.id} camera diameter`).toBe(4);
+      expect(view.clearanceBounds.maxZ - view.clearanceBounds.minZ, `${view.id} camera diameter`).toBe(4);
+      expect((view.clearanceBounds.minX + view.clearanceBounds.maxX) * 0.5, `${view.id} clearance X center`).toBeCloseTo(cameraPoint.x, 6);
+      expect((view.clearanceBounds.minZ + view.clearanceBounds.maxZ) * 0.5, `${view.id} clearance Z center`).toBeCloseTo(cameraPoint.z, 6);
       expect(DISTRICT_DATA.architectureSites.some(({ collisionBounds }) => boundsOverlap(view.clearanceBounds, expanded(collisionBounds, 1)))).toBe(false);
       expect(DISTRICT_DATA.plantingZones.some(({ bounds }) => boundsOverlap(view.clearanceBounds, bounds))).toBe(false);
       expect(boundsOverlap(view.clearanceBounds, DISTRICT_DATA.coast.seaBounds)).toBe(false);
-      for (const road of ROAD_SPECS) {
-        const points = [road.centerline.from, ...road.centerline.via, road.centerline.to];
-        expect(boundsToPolylineDistance(view.clearanceBounds, points), `${view.id} road corridor ${road.id}`).toBeGreaterThanOrEqual(road.width * 0.5 + road.sidewalkWidth);
-      }
       for (const parcel of DISTRICT_DATA.parcels) {
         expect(boundsOverlap(view.clearanceBounds, parcel.bounds), `${view.id} parcel apron ${parcel.id}`).toBe(false);
         for (const wall of parcel.wallSegments) expect(boundsToPolylineDistance(view.clearanceBounds, [wall.from, wall.to]), `${view.id} wall ${parcel.id}`).toBeGreaterThanOrEqual(1);

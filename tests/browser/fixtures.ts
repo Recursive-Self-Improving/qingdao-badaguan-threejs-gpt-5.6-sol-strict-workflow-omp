@@ -142,6 +142,7 @@ export interface LandscapeCorridorPoseFixture {
 
 export interface LandscapeClearanceFixture {
   readonly id: string;
+  readonly from: Readonly<{ x: number; z: number }>;
   readonly position: Readonly<{ x: number; z: number }>;
 }
 
@@ -159,13 +160,16 @@ export const LANDSCAPE_ROAD_SPECIES = Object.freeze([
 ] as const);
 
 export const LANDSCAPE_CORRIDOR_POSES: readonly LandscapeCorridorPoseFixture[] = Object.freeze([
-  Object.freeze({ id: 'southern-flowering-roads', roadIds: Object.freeze(['shaoguan', 'ningwuguan']), position: Object.freeze([-34, 12, -286] as const), target: Object.freeze([-26, 4, -230] as const) }),
-  Object.freeze({ id: 'cedar-myrtle-roads', roadIds: Object.freeze(['zijingguan', 'zhengyangguan']), position: Object.freeze([-68, 11, -150] as const), target: Object.freeze([-110, 4, -164] as const) }),
-  Object.freeze({ id: 'autumn-maple-road', roadIds: Object.freeze(['jiayuguan']), position: Object.freeze([104, 10, -105] as const), target: Object.freeze([150, 4, -80] as const) }),
-  Object.freeze({ id: 'autumn-ginkgo-road', roadIds: Object.freeze(['juyongguan']), position: Object.freeze([-72, 10, -92] as const), target: Object.freeze([-72, 4, -35] as const) }),
-  Object.freeze({ id: 'shore-juniper-road', roadIds: Object.freeze(['linhuaiguan']), position: Object.freeze([170, 9, -18] as const), target: Object.freeze([150, 4, 10] as const) }),
-  Object.freeze({ id: 'western-plane-road', roadIds: Object.freeze(['wushengguan']), position: Object.freeze([-50, 11, -155] as const), target: Object.freeze([-120, 4, -154] as const) }),
-  Object.freeze({ id: 'central-eastern-plane-roads', roadIds: Object.freeze(['hangu-pass', 'shanhaiguan']), position: Object.freeze([-30, 12, -238] as const), target: Object.freeze([65, 4, -190] as const) }),
+  Object.freeze({ id: 'shaoguan-peach-road', roadIds: Object.freeze(['shaoguan']), position: Object.freeze([-195, 6.601323, -267.5] as const), target: Object.freeze([-100, 6.511238, -267.5] as const) }),
+  Object.freeze({ id: 'ningwuguan-crabapple-road', roadIds: Object.freeze(['ningwuguan']), position: Object.freeze([74.826969, 5.709407, -210.386612] as const), target: Object.freeze([159.826969, 5.581, -208.425073] as const) }),
+  Object.freeze({ id: 'zijingguan-cedar-road', roadIds: Object.freeze(['zijingguan']), position: Object.freeze([-145, 4.900335, -177.5] as const), target: Object.freeze([-50, 4.88297, -177.5] as const) }),
+  Object.freeze({ id: 'zhengyangguan-myrtle-road', roadIds: Object.freeze(['zhengyangguan']), position: Object.freeze([-150.214198, 4.196145, -133.925512] as const), target: Object.freeze([-65.214198, 4.243663, -136.354084] as const) }),
+  Object.freeze({ id: 'jiayuguan-maple-road', roadIds: Object.freeze(['jiayuguan']), position: Object.freeze([-100, 3.363676, -80] as const), target: Object.freeze([-20, 3.262565, -80] as const) }),
+  Object.freeze({ id: 'juyongguan-ginkgo-road', roadIds: Object.freeze(['juyongguan']), position: Object.freeze([-140, 2.596319, -41] as const), target: Object.freeze([-55, 2.604859, -40.4375] as const) }),
+  Object.freeze({ id: 'linhuaiguan-juniper-road', roadIds: Object.freeze(['linhuaiguan']), position: Object.freeze([105, 1.716736, 2.5] as const), target: Object.freeze([185, 1.725409, 2.5] as const) }),
+  Object.freeze({ id: 'wushengguan-plane-road', roadIds: Object.freeze(['wushengguan']), position: Object.freeze([-112, 2.309214, -25] as const), target: Object.freeze([-107, 5.486047, -215] as const) }),
+  Object.freeze({ id: 'hangu-pass-plane-road', roadIds: Object.freeze(['hangu-pass']), position: Object.freeze([7.5, 6.285604, -250] as const), target: Object.freeze([13, 5.801318, -222] as const) }),
+  Object.freeze({ id: 'shanhaiguan-plane-road', roadIds: Object.freeze(['shanhaiguan']), position: Object.freeze([128, 4.17913, -135] as const), target: Object.freeze([135, 4.691962, -160] as const) }),
 ]);
 
 export const LANDSCAPE_OVERHEAD_POSE = Object.freeze({
@@ -174,9 +178,9 @@ export const LANDSCAPE_OVERHEAD_POSE = Object.freeze({
 });
 
 export const LANDSCAPE_CLEARANCE_FIXTURES: readonly LandscapeClearanceFixture[] = Object.freeze([
-  Object.freeze({ id: 'hangu-axis', position: Object.freeze({ x: 0, z: -80 }) }),
-  Object.freeze({ id: 'juyong-axis', position: Object.freeze({ x: 72, z: -35 }) }),
-  Object.freeze({ id: 'coast-axis', position: Object.freeze({ x: 0, z: 35 }) }),
-  Object.freeze({ id: 'west-coast-opening', position: Object.freeze({ x: -120, z: 35 }) }),
-  Object.freeze({ id: 'east-coast-opening', position: Object.freeze({ x: 120, z: 35 }) }),
+  Object.freeze({ id: 'hangu-axis', from: Object.freeze({ x: 0, z: -75 }), position: Object.freeze({ x: 0, z: -80 }) }),
+  Object.freeze({ id: 'juyong-axis', from: Object.freeze({ x: 67, z: -35 }), position: Object.freeze({ x: 72, z: -35 }) }),
+  Object.freeze({ id: 'coast-axis', from: Object.freeze({ x: 0, z: 30 }), position: Object.freeze({ x: 0, z: 35 }) }),
+  Object.freeze({ id: 'west-coast-opening', from: Object.freeze({ x: -120, z: 30 }), position: Object.freeze({ x: -120, z: 35 }) }),
+  Object.freeze({ id: 'east-coast-opening', from: Object.freeze({ x: 120, z: 30 }), position: Object.freeze({ x: 120, z: 35 }) }),
 ]);

@@ -251,6 +251,10 @@ describe('ThreeRuntime lifecycle safety', () => {
     }));
     const liveChild = runtime.scene.children[0];
     const liveWorld = runtime.worldBuildResult;
+    const publishedMetrics = canvas.dataset.threeRuntimeMetrics;
+    const renders = runtime.metrics.runtime.renders;
+    const rendererCalls = renderer.render.mock.calls.length;
+
 
     expect(() => runtime.rebuildScene()).toThrow('rebuild failed');
 
@@ -260,6 +264,9 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(stagedDispose).toHaveBeenCalledTimes(1);
     expect(initialDispose).not.toHaveBeenCalled();
     expect(runtime.metrics.runtime.rebuilds).toBe(0);
+    expect(runtime.metrics.runtime.renders).toBe(renders);
+    expect(renderer.render).toHaveBeenCalledTimes(rendererCalls);
+    expect(canvas.dataset.threeRuntimeMetrics).toBe(publishedMetrics);
     runtime.dispose();
   });
 
@@ -267,20 +274,29 @@ describe('ThreeRuntime lifecycle safety', () => {
     const renderer = createRenderer();
     const viewport = createViewport();
     const disposals = [vi.fn(), vi.fn()];
+    const worlds = [
+      worldBuild(Object.freeze({ density: 'high', motion: 'standard' })),
+      worldBuild(Object.freeze({ density: 'low', motion: 'reduced' })),
+    ];
     let builds = 0;
     const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, (resources, group) => {
       const index = builds;
       builds += 1;
       resources.register(disposable(disposals[index]), group);
-      return worldBuild();
+      const world = worlds[index];
+      if (world === undefined) throw new Error('Missing queued world build');
+      return world;
     }));
     const liveChild = runtime.scene.children[0];
     const liveWorld = runtime.worldBuildResult;
+    const publishedMetrics = canvas.dataset.threeRuntimeMetrics;
+    const renders = runtime.metrics.runtime.renders;
+    const rendererCalls = renderer.render.mock.calls.length;
     vi.spyOn(runtime.scene, 'add').mockImplementationOnce(() => {
       throw new Error('scene add failed');
     });
 
-    expect(() => runtime.rebuildScene()).toThrow('scene add failed');
+    expect(() => runtime.rebuildScene(Object.freeze({ density: 'low', motion: 'reduced' }))).toThrow('scene add failed');
 
     expect(runtime.scene.children).toEqual([liveChild]);
     expect(runtime.worldBuildResult).toBe(liveWorld);
@@ -288,6 +304,65 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(disposals[1]).toHaveBeenCalledTimes(1);
     expect(disposals[0]).not.toHaveBeenCalled();
     expect(runtime.metrics.runtime.rebuilds).toBe(0);
+    expect(runtime.metrics.world.landscape?.settings).toEqual({ density: 'high', motion: 'standard' });
+    expect(runtime.metrics.runtime.renders).toBe(renders);
+    expect(renderer.render).toHaveBeenCalledTimes(rendererCalls);
+    expect(canvas.dataset.threeRuntimeMetrics).toBe(publishedMetrics);
+    runtime.dispose();
+  });
+
+  it('renders a committed rebuild generation before publishing its distinct renderer stats', () => {
+    const renderer = createRenderer();
+    const viewport = createViewport();
+    const initial = worldBuild();
+    const rebuilt = worldBuild(Object.freeze({ density: 'low', motion: 'standard' }));
+    const builds = [initial, rebuilt];
+    let buildIndex = 0;
+    let runtime: ThreeRuntime;
+    const renderObservations: Array<{
+      readonly child: Group | undefined;
+      readonly committedWorld: WorldBuildResult | null;
+      readonly publishedMetrics: string | undefined;
+    }> = [];
+    renderer.render.mockImplementation((scene) => {
+      const renderedScene = scene as Scene;
+      renderObservations.push({
+        child: renderedScene.children[0] as Group | undefined,
+        committedWorld: runtime.worldBuildResult,
+        publishedMetrics: canvas.dataset.threeRuntimeMetrics,
+      });
+      renderer.info.render.calls = 2;
+      renderer.info.render.triangles = 345;
+    });
+    runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => {
+      const build = builds[buildIndex];
+      buildIndex += 1;
+      if (build === undefined) throw new Error('Missing queued world build');
+      return build;
+    }));
+    const publishedBeforeRebuild = canvas.dataset.threeRuntimeMetrics;
+    const rendersBeforeRebuild = runtime.metrics.runtime.renders;
+
+    runtime.rebuildScene(Object.freeze({ density: 'low', motion: 'standard' }));
+
+    expect(renderObservations).toEqual([{
+      child: rebuilt.root,
+      committedWorld: rebuilt,
+      publishedMetrics: publishedBeforeRebuild,
+    }]);
+    expect(runtime.metrics.runtime.renders).toBe(rendersBeforeRebuild + 1);
+    expect(runtime.metrics.world.architecture?.renderInfo).toEqual({ calls: 2, triangles: 345 });
+    expect(runtime.metrics.world.landscape?.renderInfo).toEqual({ calls: 2, triangles: 345 });
+    expect(JSON.parse(canvas.dataset.threeRuntimeMetrics ?? '{}')).toMatchObject({
+      runtime: { renders: rendersBeforeRebuild + 1 },
+      world: {
+        architecture: { renderInfo: { calls: 2, triangles: 345 } },
+        landscape: {
+          settings: { density: 'low', motion: 'standard' },
+          renderInfo: { calls: 2, triangles: 345 },
+        },
+      },
+    });
     runtime.dispose();
   });
 
@@ -551,7 +626,33 @@ describe('ThreeRuntime lifecycle safety', () => {
     const viewport = createViewport();
     const order: string[] = [];
     let builtSettings: LandscapeSettings | null = null;
-    const world = worldBuild(Object.freeze({ density: 'high', motion: 'reduced' }));
+    const baseWorld = worldBuild(Object.freeze({ density: 'high', motion: 'reduced' }));
+    const view = baseWorld.landscape.cameraViews[0];
+    if (view === undefined) throw new Error('Missing landscape camera view');
+    const [cameraX, , cameraZ] = view.position;
+    const overlapBounds = Object.freeze({
+      minX: cameraX - 0.1,
+      maxX: cameraX + 0.1,
+      minZ: cameraZ - 0.1,
+      maxZ: cameraZ + 0.1,
+    });
+    const world: WorldBuildResult = {
+      ...baseWorld,
+      landscape: {
+        ...baseWorld.landscape,
+        clearanceBounds: Object.freeze([
+          Object.freeze({ id: 'camera-probe-tree', roadId: view.roadIds[0] ?? null, kind: 'vegetation' as const, bounds: overlapBounds }),
+          Object.freeze({ id: 'camera-probe-detail', roadId: null, kind: 'detail' as const, bounds: overlapBounds }),
+          Object.freeze({ id: 'authored-camera-clearance', roadId: null, kind: 'camera' as const, bounds: overlapBounds }),
+          Object.freeze({
+            id: 'far-tree',
+            roadId: null,
+            kind: 'vegetation' as const,
+            bounds: Object.freeze({ minX: cameraX + 10, maxX: cameraX + 11, minZ: cameraZ + 10, maxZ: cameraZ + 11 }),
+          }),
+        ]),
+      },
+    };
     vi.mocked(world.landscape.update).mockImplementation(() => order.push('landscape'));
     renderer.render.mockImplementation(() => { order.push('renderer'); });
     const runtime = new ThreeRuntime(canvas, {
@@ -575,8 +676,7 @@ describe('ThreeRuntime lifecycle safety', () => {
       motion: { amplitude: 0 },
       clearanceIntersections: 0,
     });
-    const view = world.landscape.cameraViews[0];
-    expect(view).toBeDefined();
+    expect(runtime.metrics.world.landscape?.currentCameraClearanceIntersections).toBe(0);
     const activeFrame = runtime.frameLandscape(view?.id ?? 'missing');
     expect(activeFrame).toMatchObject({
       viewId: view?.id,
@@ -585,6 +685,10 @@ describe('ThreeRuntime lifecycle safety', () => {
     });
     expect(runtime.camera.position.toArray()).toEqual(view?.position);
     expect(runtime.metrics.world.landscape?.activeFrame).toEqual(activeFrame);
+    expect(runtime.metrics.world.landscape?.currentCameraClearanceIntersections).toBe(2);
+    expect(JSON.parse(canvas.dataset.threeRuntimeMetrics ?? '{}')).toMatchObject({
+      world: { landscape: { currentCameraClearanceIntersections: 2 } },
+    });
     expect(runtime.metrics.world.debug.plantingLabelCount).toBe(10);
     runtime.dispose();
   });

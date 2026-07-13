@@ -8,6 +8,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { APP_CONFIG } from '../app/config';
+import { DEFAULT_CAMERA_RADIUS } from '../exploration/navigation';
 import { ViewportObserver, type ViewportMeasurement } from '../platform/viewport';
 import { FrameClock } from './frameClock';
 import { ResourceRegistry, type ResourceRegistryCounts } from './ResourceRegistry';
@@ -31,6 +32,15 @@ const DEFAULT_LANDSCAPE_SETTINGS: LandscapeSettings = Object.freeze({
   density: 'high',
   motion: 'standard',
 });
+
+function circleIntersectsBounds(x: number, z: number, radius: number, bounds: Bounds2): boolean {
+  const closestX = Math.max(bounds.minX, Math.min(x, bounds.maxX));
+  const closestZ = Math.max(bounds.minZ, Math.min(z, bounds.maxZ));
+  const deltaX = x - closestX;
+  const deltaZ = z - closestZ;
+  return deltaX * deltaX + deltaZ * deltaZ < radius * radius;
+}
+
 
 export interface ThreeRuntimeFrame {
   readonly deltaSeconds: number;
@@ -158,6 +168,7 @@ export interface WorldRuntimeMetrics {
     readonly activeFrame: ActiveLandscapeFrame | null;
     readonly cameraViews: readonly LandscapeCameraView[];
     readonly clearanceIntersections: number;
+    readonly currentCameraClearanceIntersections: number;
   };
 }
 
@@ -417,6 +428,8 @@ export class ThreeRuntime {
     if (previousGroup !== null) {
       this.runCleanupStage(cleanupErrors, () => this.resources.disposeGroup(previousGroup));
     }
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
     this.publishDevelopmentMetrics();
     if (cleanupErrors.length !== 0) {
       throw new AggregateError(cleanupErrors, 'Scene rebuild committed but previous resources failed to dispose.');
@@ -759,6 +772,9 @@ export class ThreeRuntime {
           activeFrame: this.activeLandscapeFrame,
           cameraViews: landscape.cameraViews,
           clearanceIntersections: landscapeMetrics.clearanceIntersections,
+          currentCameraClearanceIntersections: landscape.clearanceBounds.filter(({ kind, bounds }) =>
+            kind !== 'camera'
+            && circleIntersectsBounds(this.camera.position.x, this.camera.position.z, DEFAULT_CAMERA_RADIUS, bounds)).length,
         },
       } : {}),
     };

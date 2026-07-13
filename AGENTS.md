@@ -18,3 +18,9 @@
 - Define camera fixtures in authored world space and pair visual captures with stable evidence hashes so camera regressions remain reproducible.
 - When reducing Low density, preserve category and identity anchor instances so authored composition and semantic verification remain stable.
 - Keep identity-bearing palettes separate from nonidentity scale variation: palette can encode species or category identity, while size changes remain visual-only.
+- Performance metrics must distinguish logical entities from actual GPU transforms; report both counts instead of treating instancing as one-to-one.
+- Low identity-only passes with zero motion must skip matrix uploads entirely; preserve identity checks without issuing no-op transform writes.
+- Route evidence should sample eye-level one-road fixtures and sweep the current camera, so road hierarchy and navigation cues are judged from the routed viewpoint rather than a stale pose.
+- Treat a production capture as nonblank only after decoding its pixels and verifying nonzero content; file existence or byte size alone is insufficient.
+- Debug annotation mapping may use matching numbered badges when each badge uniquely identifies its target; avoid ambiguous leader lines that can misattribute labels.
+- Establish avenue identity through cross-road hierarchy and clearance cues, not a single road’s width or decoration in isolation.

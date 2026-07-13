@@ -98,7 +98,7 @@ export function createLandscape(
       sharedGeometryCount: vegetation.metrics.reuse.sharedGeometryCount + details.metrics.sharedGeometryCount,
       sharedMaterialCount: vegetation.metrics.reuse.sharedMaterialCount + details.metrics.sharedMaterialCount,
       instanceBatchCount: vegetation.metrics.reuse.instanceBatchCount + details.metrics.instanceBatchCount,
-      instanceCount: active.vegetationInstances + active.detailInstances,
+      instanceCount: vegetation.metrics.reuse.instanceCount + details.metrics.totalInstances,
       estimatedInstancedDrawCalls: active.drawCalls,
       naiveRepeatedDrawCalls: vegetation.metrics.reuse.naiveRepeatedDrawCalls + details.metrics.naiveRepeatedDrawCalls,
     }),
