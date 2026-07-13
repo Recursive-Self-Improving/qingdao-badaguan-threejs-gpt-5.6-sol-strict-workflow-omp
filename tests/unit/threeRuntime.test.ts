@@ -38,15 +38,17 @@ interface ViewportDouble {
 
 function createRenderer(): RendererDouble {
   const info = { render: { calls: 0, triangles: 0 } };
+  const shadowMap = { enabled: false, type: null, autoUpdate: true, needsUpdate: false };
   return {
     outputColorSpace: null,
     toneMapping: null,
     toneMappingExposure: 0,
-    shadowMap: { enabled: false, type: null, autoUpdate: true, needsUpdate: false },
+    shadowMap,
     setAnimationLoop: vi.fn(),
     render: vi.fn(() => {
       info.render.calls = 1;
       info.render.triangles = 120;
+      shadowMap.needsUpdate = false;
     }),
     info,
     dispose: vi.fn(),
@@ -379,6 +381,7 @@ describe('ThreeRuntime lifecycle safety', () => {
         publishedMetrics: canvas.dataset.threeRuntimeMetrics,
         shadowRefreshRequested: renderer.shadowMap.needsUpdate,
       });
+      renderer.shadowMap.needsUpdate = false;
       renderer.info.render.calls = 2;
       renderer.info.render.triangles = 345;
     });
@@ -414,6 +417,10 @@ describe('ThreeRuntime lifecycle safety', () => {
         },
       },
     });
+    const subsequentView = rebuilt.landscape.cameraViews[0];
+    if (subsequentView === undefined) throw new Error('Missing rebuilt landscape camera view');
+    expect(runtime.frameLandscape(subsequentView.id)).not.toBeNull();
+    expect(renderObservations.at(-1)?.shadowRefreshRequested).toBe(false);
     runtime.dispose();
   });
 

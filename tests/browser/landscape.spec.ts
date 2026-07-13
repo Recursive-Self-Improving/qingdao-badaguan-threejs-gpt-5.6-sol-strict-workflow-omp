@@ -210,9 +210,13 @@ test('explicit Low rebuild preserves camera and identities while lowering positi
   expect(lowMetrics.camera).toEqual(camera);
   expect(low.renderInfo.calls).toBeGreaterThan(0);
   expect(low.renderInfo.triangles).toBeGreaterThan(0);
-  expect(low.renderInfo).not.toEqual(beforeLow.renderInfo);
-  expect(low.renderInfo.calls).toBeLessThanOrEqual(beforeLow.renderInfo.calls);
-  expect(low.renderInfo.triangles).toBeLessThan(beforeLow.renderInfo.triangles);
+  const steadyLowFirst = landscape(await command(page, { action: 'landscape/frame', view: framedFixture.id }));
+  expect(steadyLowFirst.renderInfo.calls).toBeLessThanOrEqual(beforeLow.renderInfo.calls);
+  expect(steadyLowFirst.renderInfo.triangles).toBeLessThan(beforeLow.renderInfo.triangles);
+  expect(low.renderInfo.calls).toBeGreaterThanOrEqual(steadyLowFirst.renderInfo.calls);
+  expect(low.renderInfo.triangles).toBeGreaterThanOrEqual(steadyLowFirst.renderInfo.triangles);
+  const steadyLowSecond = landscape(await command(page, { action: 'landscape/frame', view: framedFixture.id }));
+  expect(steadyLowSecond.renderInfo).toEqual(steadyLowFirst.renderInfo);
   expect(low.identities).toEqual(high.identities);
   expect(low.active).toEqual(low.densityCounts.low);
   expect(low.active.identityInstances).toBeGreaterThanOrEqual(10);
