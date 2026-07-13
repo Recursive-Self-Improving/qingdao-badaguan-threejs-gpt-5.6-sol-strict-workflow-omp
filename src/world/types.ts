@@ -1,4 +1,4 @@
-import type { Object3D } from 'three';
+import type { Object3D, Texture } from 'three';
 
 export interface Vec2 {
   readonly x: number;
@@ -456,12 +456,104 @@ export interface WorldDebugController {
   visitAnchor(anchorId: string): RouteAnchor | null;
 }
 
+export type EnvironmentViewId = 'spawn' | 'deep-shade' | 'uphill-vista' | 'landmark' | 'shore';
+
+export interface EnvironmentCameraView {
+  readonly id: EnvironmentViewId;
+  readonly position: readonly [number, number, number];
+  readonly target: readonly [number, number, number];
+}
+
+export interface EnvironmentQualityConfig {
+  readonly shadowMapSize: 512 | 1024 | 2048;
+  readonly shadowCameraExtent: number;
+  readonly shadowBias: number;
+  readonly shadowNormalBias: number;
+  readonly exposure: number;
+  readonly waterSegments: 1 | 4 | 8;
+}
+
+export interface EnvironmentConfig {
+  readonly sky: { readonly zenith: number; readonly horizon: number; readonly ground: number };
+  readonly fog: { readonly color: number; readonly near: number; readonly far: number };
+  readonly hemisphere: { readonly skyColor: number; readonly groundColor: number; readonly intensity: number };
+  readonly sun: {
+    readonly color: number;
+    readonly intensity: number;
+    readonly position: readonly [number, number, number];
+    readonly target: readonly [number, number, number];
+  };
+  readonly quality: Readonly<Record<LandscapeDensity, EnvironmentQualityConfig>>;
+  readonly cameraViews: readonly EnvironmentCameraView[];
+}
+
+export interface EnvironmentMetrics {
+  readonly quality: LandscapeDensity;
+  readonly motion: LandscapeMotion;
+  readonly sunDirection: readonly [number, number, number];
+  readonly fogNear: number;
+  readonly fogFar: number;
+  readonly exposure: number;
+  readonly shadowMapSize: number;
+  readonly shadowBias: number;
+  readonly shadowNormalBias: number;
+  readonly contactGrounding: true;
+}
+
+export interface EnvironmentController {
+  readonly root: Object3D;
+  readonly config: EnvironmentConfig;
+  readonly metrics: EnvironmentMetrics;
+  readonly cameraViews: readonly EnvironmentCameraView[];
+  readonly backgroundColor: number;
+  readonly backgroundTexture: Texture;
+  readonly fogColor: number;
+  readonly fogNear: number;
+  readonly fogFar: number;
+  update(frame: LandscapeUpdateFrame): void;
+  reset(): void;
+  setCaptureTime(time: number | null): void;
+}
+
+export interface CoastConfig {
+  readonly waterColor: number;
+  readonly waterRoughness: number;
+  readonly beachColor: number;
+  readonly horizonColor: number;
+  readonly standardMotionAmplitude: number;
+  readonly reducedMotionAmplitude: 0;
+}
+
+export interface CoastMetrics {
+  readonly quality: LandscapeDensity;
+  readonly motion: LandscapeMotion;
+  readonly waterMotionAmplitude: number;
+  readonly waterTransformChecksum: number;
+  readonly waterSegments: number;
+  readonly beachLayers: number;
+  readonly horizonLayers: number;
+  readonly openingCount: number;
+  readonly clearanceIntersections: 0;
+  readonly collidable: false;
+}
+
+export interface CoastController {
+  readonly root: Object3D;
+  readonly config: CoastConfig;
+  readonly metrics: CoastMetrics;
+  update(frame: LandscapeUpdateFrame): void;
+  reset(): void;
+  setCaptureTime(time: number | null): void;
+}
+
 export interface WorldBuildResult {
   readonly root: Object3D;
   readonly data: DistrictData;
   readonly debug: WorldDebugController;
   readonly architecture: ArchitectureBuildResult;
   readonly landscape: LandscapeBuildResult;
+  readonly environment: EnvironmentController;
+  readonly coast: CoastController;
   readonly navigation: {
     readonly resolve: NavigationResolver;
     readonly sampleGroundHeight: GroundHeightSampler;

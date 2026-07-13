@@ -9,6 +9,8 @@ import { createVillaKit } from './architecture/villaKit';
 import { createVillaDistrict } from './architecture/createVillas';
 import { createLandmarks } from './architecture/createLandmarks';
 import { createLandscape } from './landscape/createLandscape';
+import { createEnvironment } from './environment/createEnvironment';
+import { createCoast } from './coast/createCoast';
 import type { LandscapeSettings, WorldBuildResult } from './types';
 const DEFAULT_LANDSCAPE_SETTINGS: LandscapeSettings = Object.freeze({
   density: 'high',
@@ -23,8 +25,12 @@ export function createWorld(
 ): WorldBuildResult {
   const root = new Group();
   root.name = 'badaguan-district';
+  const environment = createEnvironment(resources, group, settings);
+  root.add(environment.root);
   root.add(createTerrain(resources, group));
   root.add(createStreetNetwork(resources, group));
+  const coast = createCoast(resources, group, settings, DISTRICT_DATA);
+  root.add(coast.root);
   const villaKit = createVillaKit(resources, group);
   createVillaDistrict(villaKit, DISTRICT_DATA.architectureSites);
   createLandmarks(villaKit, DISTRICT_DATA.architectureSites);
@@ -40,6 +46,8 @@ export function createWorld(
     debug,
     architecture,
     landscape,
+    environment,
+    coast,
     navigation: Object.freeze({
       resolve: resolveNavigation,
       sampleGroundHeight,

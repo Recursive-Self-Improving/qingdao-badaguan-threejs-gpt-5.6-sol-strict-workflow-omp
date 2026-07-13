@@ -1,3 +1,4 @@
+import { Box3 } from 'three';
 import { describe, expect, it } from 'vitest';
 
 import { ResourceRegistry } from '../../src/render/ResourceRegistry';
@@ -133,4 +134,19 @@ describe('architecture factories', () => {
     expect(live.resources).toBeGreaterThan(0);
     expect(resources.disposeGroup(group)).toBe(live.resources);
   });
+  it('keeps the Huashi tower tangent to rather than embedded in the main mass', () => {
+    const resources = new ResourceRegistry();
+    const group = 'architecture-huashi-tangent';
+    const { architecture } = buildArchitecture(resources, group);
+    architecture.root.updateMatrixWorld(true);
+    const tower = architecture.root.getObjectByName('architecture:huashi-inspired-landmark:compact-authored-tower-cue');
+    const main = architecture.root.getObjectByName('architecture:huashi-inspired-landmark:sculptural-main-stone-mass');
+    expect(tower).toBeDefined();
+    expect(main).toBeDefined();
+    const towerBounds = new Box3().setFromObject(tower!);
+    const mainBounds = new Box3().setFromObject(main!);
+    expect(towerBounds.max.x).toBeCloseTo(mainBounds.min.x, 5);
+    resources.disposeGroup(group);
+  });
+
 });

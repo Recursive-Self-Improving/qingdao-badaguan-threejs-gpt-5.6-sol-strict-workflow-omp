@@ -5,7 +5,7 @@ import {
   DodecahedronGeometry,
   Group,
   InstancedMesh,
-  MeshBasicMaterial,
+  MeshStandardMaterial,
   Object3D as TransformObject,
   PlaneGeometry,
   SphereGeometry,
@@ -905,7 +905,7 @@ function createSharedMaterials(
   resources: ResourceRegistry,
   group: string,
   data: DistrictData,
-): ReadonlyMap<DetailMaterialId, MeshBasicMaterial> {
+): ReadonlyMap<DetailMaterialId, MeshStandardMaterial> {
   const definitions: readonly (readonly [DetailMaterialId, Color | number])[] = [
     ['ginkgo-litter', litterColor(data, 'ginkgo', 0xb89c35)],
     ['maple-litter', litterColor(data, 'maple', 0x9b5830)],
@@ -917,15 +917,17 @@ function createSharedMaterials(
     ['dark-heritage-metal', MATERIAL_COLORS.darkHeritageMetal],
     ['warm-opaque-lantern', MATERIAL_COLORS.warmOpaqueLantern],
   ];
-  const materials = new Map<DetailMaterialId, MeshBasicMaterial>();
+  const materials = new Map<DetailMaterialId, MeshStandardMaterial>();
   for (const [id, color] of definitions) {
-    const material = new MeshBasicMaterial({
+    const material = new MeshStandardMaterial({
       color,
       transparent: false,
       opacity: 1,
       depthTest: true,
       depthWrite: true,
       toneMapped: true,
+      roughness: id === 'dark-heritage-metal' ? 0.68 : 0.94,
+      metalness: id === 'dark-heritage-metal' ? 0.16 : 0,
     });
     material.name = `landscape:details:${id}`;
     materials.set(id, resources.register(material, group));
@@ -1308,7 +1310,9 @@ export function createDetails(
     const material = requireMapValue(materials, batch.materialId, `material "${batch.materialId}"`);
     const mesh = resources.register(new InstancedMesh(geometry, material, batch.instances.length), group);
     mesh.name = `landscape:details:instances:${batch.batchId}:${batch.geometryId}:${batch.materialId}`;
+    mesh.castShadow = false;
     mesh.userData['collidable'] = false;
+    mesh.receiveShadow = true;
     for (let index = 0; index < batch.instances.length; index += 1) {
       const instance = batch.instances[index];
       if (instance === undefined) continue;

@@ -184,3 +184,11 @@ export const LANDSCAPE_CLEARANCE_FIXTURES: readonly LandscapeClearanceFixture[] 
   Object.freeze({ id: 'west-coast-opening', from: Object.freeze({ x: -120, z: 30 }), position: Object.freeze({ x: -120, z: 35 }) }),
   Object.freeze({ id: 'east-coast-opening', from: Object.freeze({ x: 120, z: 30 }), position: Object.freeze({ x: 120, z: 35 }) }),
 ]);
+
+export const C07_ENVIRONMENT_VIEWS = Object.freeze([
+  Object.freeze({ id: 'spawn', position: Object.freeze([0, 4.35, 5] as const), target: Object.freeze([0, 4.1, -42] as const) }),
+  Object.freeze({ id: 'deep-shade', position: Object.freeze([-140, 5.05, -177.5] as const), target: Object.freeze([-70, 4.9, -177.5] as const) }),
+  Object.freeze({ id: 'uphill-vista', position: Object.freeze([0, 3.2, -80] as const), target: Object.freeze([0, 8.4, -245] as const) }),
+  Object.freeze({ id: 'landmark', position: Object.freeze([0, 4.35, 35] as const), target: Object.freeze([36, 6.4, 25.5] as const) }),
+  Object.freeze({ id: 'shore', position: Object.freeze([0, 1.85, 37] as const), target: Object.freeze([0, 0.8, 140] as const) }),
+] as const);

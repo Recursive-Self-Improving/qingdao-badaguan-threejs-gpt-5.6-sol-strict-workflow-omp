@@ -7,8 +7,8 @@ import {
   InstancedMesh,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   Object3D as TransformObject,
-  PlaneGeometry,
   type Material,
   type Object3D,
 } from 'three';
@@ -27,8 +27,8 @@ import type {
 
 const SURFACE_SAMPLE_SPACING = 8;
 const POLYLINE_JOINT_SEGMENTS = 12;
+const CORRIDOR_SAMPLE_SPACING = 2;
 const WALL_SECTION_LENGTH = 8;
-const COAST_SECTION_LENGTH = 18;
 const CROSSWALK_STRIPE_LENGTH = 0.8;
 const CROSSWALK_STRIPE_GAP = 0.65;
 const MINIMUM_ENTRANCE_WIDTH = 3;
@@ -36,12 +36,10 @@ const MINIMUM_ENTRANCE_WIDTH = 3;
 const LAYERS = {
   lawn: 0.025,
   publicGreen: 0.035,
-  setback: 0.045,
-  sidewalk: 0.06,
-  path: 0.075,
-  promenade: 0.08,
-  road: 0.09,
-  entranceApron: 0.105,
+  sidewalk: 0.09,
+  path: 0.09,
+  road: 0.095,
+  roadIntersection: 0.1,
   crosswalk: 0.12,
 } as const;
 
@@ -50,23 +48,15 @@ const WALL_THICKNESS = 0.48;
 const GATE_POST_HEIGHT = 0.9;
 const GATE_POST_SIZE = 0.48;
 const GATE_ALIGNMENT_TOLERANCE = 0.75;
-const COAST_SCREEN_THICKNESS = 0.7;
-const SEA_LEVEL_OFFSET = -0.08;
-
 const COLORS = {
   road: 0x555c5b,
-  sidewalk: 0xc5baa4,
+  sidewalk: 0xb7b09b,
   parcelLawn: 0x738363,
-  setback: 0xa89c83,
   publicGreen: 0x4f7451,
   publicPath: 0xd3c5a5,
-  promenade: 0xb6aa93,
-  entranceApron: 0xdecfac,
   crosswalk: 0xeee2c5,
   wall: 0x887c69,
   gate: 0x665c50,
-  coastScreen: 0x7e7467,
-  sea: 0x557f8e,
 } as const;
 
 interface BoxInstance {
@@ -273,6 +263,117 @@ function offsetPolylines(
   return [left, right];
 }
 
+function appendRoadCorridor(
+  roadPositions: number[],
+  sidewalkPositions: number[],
+  centerline: readonly Vec2[],
+  roadWidth: number,
+  sidewalkWidth: number,
+): void {
+  const [roadLeft, roadRight] = offsetPolylines(centerline, roadWidth * 0.5);
+  const [outerLeft, outerRight] = offsetPolylines(centerline, roadWidth * 0.5 + sidewalkWidth);
+  const interpolatePoint = (from: Vec2, to: Vec2, t: number): Vec2 => ({
+    x: from.x + (to.x - from.x) * t,
+    z: from.z + (to.z - from.z) * t,
+  });
+  for (let index = 1; index < centerline.length; index += 1) {
+    const previous = index - 1;
+    const roadLeftPrevious = roadLeft[previous];
+    const roadLeftCurrent = roadLeft[index];
+    const roadRightPrevious = roadRight[previous];
+    const roadRightCurrent = roadRight[index];
+    const outerLeftPrevious = outerLeft[previous];
+    const outerLeftCurrent = outerLeft[index];
+    const outerRightPrevious = outerRight[previous];
+    const outerRightCurrent = outerRight[index];
+    const centerPrevious = centerline[previous];
+    const centerCurrent = centerline[index];
+    if (roadLeftPrevious === undefined || roadLeftCurrent === undefined
+      || roadRightPrevious === undefined || roadRightCurrent === undefined
+      || outerLeftPrevious === undefined || outerLeftCurrent === undefined
+      || outerRightPrevious === undefined || outerRightCurrent === undefined
+      || centerPrevious === undefined || centerCurrent === undefined) continue;
+    const sections = Math.max(1, Math.ceil(Math.hypot(centerCurrent.x - centerPrevious.x, centerCurrent.z - centerPrevious.z) / CORRIDOR_SAMPLE_SPACING));
+    for (let section = 0; section < sections; section += 1) {
+      const start = section / sections;
+      const end = (section + 1) / sections;
+      const roadLeftStart = interpolatePoint(roadLeftPrevious, roadLeftCurrent, start);
+      const roadLeftEnd = interpolatePoint(roadLeftPrevious, roadLeftCurrent, end);
+      const roadRightStart = interpolatePoint(roadRightPrevious, roadRightCurrent, start);
+      const roadRightEnd = interpolatePoint(roadRightPrevious, roadRightCurrent, end);
+      const outerLeftStart = interpolatePoint(outerLeftPrevious, outerLeftCurrent, start);
+      const outerLeftEnd = interpolatePoint(outerLeftPrevious, outerLeftCurrent, end);
+      const outerRightStart = interpolatePoint(outerRightPrevious, outerRightCurrent, start);
+      const outerRightEnd = interpolatePoint(outerRightPrevious, outerRightCurrent, end);
+      appendTerrainQuad(roadPositions, roadLeftStart, roadLeftEnd, roadRightStart, roadRightEnd, LAYERS.road);
+      appendTerrainQuad(sidewalkPositions, outerLeftStart, outerLeftEnd, roadLeftStart, roadLeftEnd, LAYERS.sidewalk);
+      appendTerrainQuad(sidewalkPositions, roadRightStart, roadRightEnd, outerRightStart, outerRightEnd, LAYERS.sidewalk);
+    }
+  }
+}
+
+function segmentIntersection(firstFrom: Vec2, firstTo: Vec2, secondFrom: Vec2, secondTo: Vec2): Vec2 | null {
+  const firstX = firstTo.x - firstFrom.x;
+  const firstZ = firstTo.z - firstFrom.z;
+  const secondX = secondTo.x - secondFrom.x;
+  const secondZ = secondTo.z - secondFrom.z;
+  const denominator = firstX * secondZ - firstZ * secondX;
+  if (Math.abs(denominator) < 1e-8) return null;
+  const offsetX = secondFrom.x - firstFrom.x;
+  const offsetZ = secondFrom.z - firstFrom.z;
+  const firstT = (offsetX * secondZ - offsetZ * secondX) / denominator;
+  const secondT = (offsetX * firstZ - offsetZ * firstX) / denominator;
+  if (firstT < 0 || firstT > 1 || secondT < 0 || secondT > 1) return null;
+  return { x: firstFrom.x + firstX * firstT, z: firstFrom.z + firstZ * firstT };
+}
+function appendRoadIntersections(roadPositions: number[]): number {
+  const seen = new Set<string>();
+  for (let firstIndex = 0; firstIndex < ROAD_SPECS.length; firstIndex += 1) {
+    const first = ROAD_SPECS[firstIndex];
+    if (first === undefined) continue;
+    const firstCenterline = [first.centerline.from, ...first.centerline.via, first.centerline.to];
+    for (let secondIndex = firstIndex + 1; secondIndex < ROAD_SPECS.length; secondIndex += 1) {
+      const second = ROAD_SPECS[secondIndex];
+      if (second === undefined || first.orientation === second.orientation) continue;
+      const secondCenterline = [second.centerline.from, ...second.centerline.via, second.centerline.to];
+      for (let firstSegment = 1; firstSegment < firstCenterline.length; firstSegment += 1) {
+        const firstFrom = firstCenterline[firstSegment - 1];
+        const firstTo = firstCenterline[firstSegment];
+        if (firstFrom === undefined || firstTo === undefined) continue;
+        for (let secondSegment = 1; secondSegment < secondCenterline.length; secondSegment += 1) {
+          const secondFrom = secondCenterline[secondSegment - 1];
+          const secondTo = secondCenterline[secondSegment];
+          if (secondFrom === undefined || secondTo === undefined) continue;
+          const point = segmentIntersection(firstFrom, firstTo, secondFrom, secondTo);
+          if (point === null) continue;
+          const key = `${Math.round(point.x * 1000)}:${Math.round(point.z * 1000)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const eastWest = first.orientation === 'east-west' ? first : second;
+          const northSouth = first.orientation === 'north-south' ? first : second;
+          const eastWestRoadHalf = eastWest.width * 0.5;
+          const eastWestOuterHalf = eastWestRoadHalf + eastWest.sidewalkWidth;
+          const northSouthRoadHalf = northSouth.width * 0.5;
+          const northSouthOuterHalf = northSouthRoadHalf + northSouth.sidewalkWidth;
+          appendTerrainRect(roadPositions, {
+            minX: point.x - northSouthOuterHalf,
+            maxX: point.x + northSouthOuterHalf,
+            minZ: point.z - eastWestRoadHalf,
+            maxZ: point.z + eastWestRoadHalf,
+          }, LAYERS.roadIntersection);
+          appendTerrainRect(roadPositions, {
+            minX: point.x - northSouthRoadHalf,
+            maxX: point.x + northSouthRoadHalf,
+            minZ: point.z - eastWestOuterHalf,
+            maxZ: point.z + eastWestOuterHalf,
+          }, LAYERS.roadIntersection);
+        }
+      }
+    }
+  }
+  return seen.size;
+}
+
 function closestRoadApproach(endpoint: Vec2, road: RoadSpec): RoadApproach | null {
   const centerline = [road.centerline.from, ...road.centerline.via, road.centerline.to];
   let closest: RoadApproach | null = null;
@@ -362,30 +463,6 @@ function createPublicGreenEntrances(): readonly PublicGreenEntrance[] {
   return entrances;
 }
 
-function appendEntranceApron(
-  positions: number[],
-  entrance: PublicGreenEntrance,
-): void {
-  appendStripSegment(
-    positions,
-    entrance.endpoint,
-    entrance.roadEdge,
-    entrance.width,
-    LAYERS.entranceApron,
-  );
-  appendTerrainDisk(
-    positions,
-    entrance.endpoint,
-    entrance.width * 0.55,
-    LAYERS.entranceApron,
-  );
-  appendTerrainDisk(
-    positions,
-    entrance.roadEdge,
-    entrance.width * 0.65,
-    LAYERS.entranceApron,
-  );
-}
 
 function appendCrosswalk(
   positions: number[],
@@ -419,17 +496,6 @@ function appendCrosswalk(
   }
 }
 
-function insetBounds(bounds: Bounds2, inset: number): Bounds2 | null {
-  const insetBoundsValue = {
-    minX: bounds.minX + inset,
-    maxX: bounds.maxX - inset,
-    minZ: bounds.minZ + inset,
-    maxZ: bounds.maxZ - inset,
-  };
-  return insetBoundsValue.minX < insetBoundsValue.maxX && insetBoundsValue.minZ < insetBoundsValue.maxZ
-    ? insetBoundsValue
-    : null;
-}
 
 function createSurfaceMesh(
   resources: ResourceRegistry,
@@ -440,11 +506,17 @@ function createSurfaceMesh(
 ): Mesh {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  const normals = new Float32Array(positions.length);
+  for (let index = 1; index < normals.length; index += 3) normals[index] = 1;
+  geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   geometry.computeBoundingSphere();
   resources.register(geometry, group);
-  const material = resources.register(new MeshBasicMaterial({ color: new Color(color) }), group);
+  const material = resources.register(name === 'street:sidewalks'
+    ? new MeshBasicMaterial({ color: new Color(color), fog: false })
+    : new MeshStandardMaterial({ color: new Color(color), roughness: 0.94, metalness: 0 }), group);
   const mesh = new Mesh(geometry, material);
   mesh.name = name;
+  mesh.receiveShadow = name !== 'street:sidewalks';
   return mesh;
 }
 
@@ -595,34 +667,6 @@ function createGateInstances(): readonly BoxInstance[] {
   return instances;
 }
 
-function createCoastScreenInstances(): readonly BoxInstance[] {
-  const { screen } = DISTRICT_DATA.coast;
-  const minX = DISTRICT_DATA.coast.seaBounds.minX;
-  const maxX = DISTRICT_DATA.coast.seaBounds.maxX;
-  const cuts = screen.openings
-    .map((opening) => ({
-      start: Math.max(minX, Math.min(maxX, Math.min(opening.minX, opening.maxX))) - minX,
-      end: Math.max(minX, Math.min(maxX, Math.max(opening.minX, opening.maxX))) - minX,
-    }))
-    .filter(({ start, end }) => end > start)
-    .sort((first, second) => first.start - second.start);
-  const intervals = remainingIntervals(maxX - minX, cuts);
-  const segment = {
-    from: { x: minX, z: screen.z },
-    to: { x: maxX, z: screen.z },
-  };
-  const instances: BoxInstance[] = [];
-  appendSegmentBoxes(
-    instances,
-    segment,
-    intervals,
-    screen.height,
-    COAST_SCREEN_THICKNESS,
-    COAST_SECTION_LENGTH,
-  );
-  return instances;
-}
-
 function createInstancedBoxes(
   resources: ResourceRegistry,
   group: string,
@@ -657,34 +701,21 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
   const sidewalkPositions: number[] = [];
   for (const road of ROAD_SPECS) {
     const centerline = [road.centerline.from, ...road.centerline.via, road.centerline.to];
-    appendPolylineStrip(roadPositions, centerline, road.width, LAYERS.road);
-    const sidewalkOffset = road.width * 0.5 + road.sidewalkWidth * 0.5;
-    for (const sidewalkCenterline of offsetPolylines(centerline, sidewalkOffset)) {
-      appendPolylineStrip(
-        sidewalkPositions,
-        sidewalkCenterline,
-        road.sidewalkWidth,
-        LAYERS.sidewalk,
-      );
-    }
+    appendRoadCorridor(roadPositions, sidewalkPositions, centerline, road.width, road.sidewalkWidth);
   }
+  const intersectionPositions: number[] = [];
+  const intersectionCount = appendRoadIntersections(intersectionPositions);
+  const intersections = createSurfaceMesh(resources, group, 'street:road-intersections', intersectionPositions, COLORS.road);
+  intersections.userData.intersectionCount = intersectionCount;
   root.add(
     createSurfaceMesh(resources, group, 'street:roads', roadPositions, COLORS.road),
     createSurfaceMesh(resources, group, 'street:sidewalks', sidewalkPositions, COLORS.sidewalk),
+    intersections,
   );
 
   const lawnPositions: number[] = [];
-  const setbackPositions: number[] = [];
-  for (const parcel of DISTRICT_DATA.parcels) {
-    appendTerrainRect(lawnPositions, parcel.bounds, LAYERS.lawn);
-    const setback = insetBounds(parcel.bounds, parcel.setback);
-    if (setback !== null) appendTerrainRect(setbackPositions, setback, LAYERS.setback);
-  }
-  root.add(
-    createSurfaceMesh(resources, group, 'street:parcel-lawns', lawnPositions, COLORS.parcelLawn),
-    createSurfaceMesh(resources, group, 'street:setback-pads', setbackPositions, COLORS.setback),
-  );
-
+  for (const parcel of DISTRICT_DATA.parcels) appendTerrainRect(lawnPositions, parcel.bounds, LAYERS.lawn);
+  root.add(createSurfaceMesh(resources, group, 'street:parcel-lawns', lawnPositions, COLORS.parcelLawn));
   const publicGreenPositions: number[] = [];
   appendTerrainRect(publicGreenPositions, DISTRICT_DATA.publicGreen.bounds, LAYERS.publicGreen);
   root.add(createSurfaceMesh(
@@ -707,64 +738,20 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
     COLORS.publicPath,
   ));
 
-  const entranceApronPositions: number[] = [];
   const crosswalkPositions: number[] = [];
-  for (const entrance of createPublicGreenEntrances()) {
-    appendEntranceApron(entranceApronPositions, entrance);
-    appendCrosswalk(crosswalkPositions, entrance);
-  }
-  root.add(
-    createSurfaceMesh(
-      resources,
-      group,
-      'street:public-green-entrance-aprons',
-      entranceApronPositions,
-      COLORS.entranceApron,
-    ),
-    createSurfaceMesh(
-      resources,
-      group,
-      'street:public-green-crosswalks',
-      crosswalkPositions,
-      COLORS.crosswalk,
-    ),
-  );
-
-  const promenadePositions: number[] = [];
-  appendPolylineStrip(
-    promenadePositions,
-    DISTRICT_DATA.coast.promenade.centerline,
-    DISTRICT_DATA.coast.promenade.width,
-    LAYERS.promenade,
-  );
+  for (const entrance of createPublicGreenEntrances()) appendCrosswalk(crosswalkPositions, entrance);
   root.add(createSurfaceMesh(
     resources,
     group,
-    'street:coastal-promenade',
-    promenadePositions,
-    COLORS.promenade,
+    'street:public-green-crosswalks',
+    crosswalkPositions,
+    COLORS.crosswalk,
   ));
 
-  const seaBounds = DISTRICT_DATA.coast.seaBounds;
-  const seaGeometry = resources.register(new PlaneGeometry(
-    seaBounds.maxX - seaBounds.minX,
-    seaBounds.maxZ - seaBounds.minZ,
-  ), group);
-  const seaMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.sea) }), group);
-  const sea = new Mesh(seaGeometry, seaMaterial);
-  sea.name = 'street:noncollidable-sea';
-  sea.rotation.x = -Math.PI * 0.5;
-  sea.position.set(
-    (seaBounds.minX + seaBounds.maxX) * 0.5,
-    sampleGroundHeight(0, DISTRICT_DATA.coast.edgeZ) + SEA_LEVEL_OFFSET,
-    (seaBounds.minZ + seaBounds.maxZ) * 0.5,
-  );
-  root.add(sea);
 
   const unitBox = resources.register(new BoxGeometry(1, 1, 1), group);
-  const wallMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.wall) }), group);
-  const gateMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.gate) }), group);
-  const coastMaterial = resources.register(new MeshBasicMaterial({ color: new Color(COLORS.coastScreen) }), group);
+  const wallMaterial = resources.register(new MeshStandardMaterial({ color: new Color(COLORS.wall), roughness: 0.96 }), group);
+  const gateMaterial = resources.register(new MeshStandardMaterial({ color: new Color(COLORS.gate), roughness: 0.88, metalness: 0.03 }), group);
   const walls = createInstancedBoxes(
     resources,
     group,
@@ -781,17 +768,16 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
     gateMaterial,
     createGateInstances(),
   );
-  const coastScreen = createInstancedBoxes(
-    resources,
-    group,
-    'street:coastal-view-screen',
-    unitBox,
-    coastMaterial,
-    createCoastScreenInstances(),
-  );
-  if (walls !== null) root.add(walls);
-  if (gates !== null) root.add(gates);
-  if (coastScreen !== null) root.add(coastScreen);
+  if (walls !== null) {
+    walls.castShadow = true;
+    walls.receiveShadow = true;
+    root.add(walls);
+  }
+  if (gates !== null) {
+    gates.castShadow = true;
+    gates.receiveShadow = true;
+    root.add(gates);
+  }
 
   return root;
 }

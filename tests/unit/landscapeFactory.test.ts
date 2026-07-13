@@ -1,4 +1,4 @@
-import { DynamicDrawUsage, InstancedMesh, Material, MeshBasicMaterial, Object3D } from 'three';
+import { DynamicDrawUsage, InstancedMesh, Material, MeshStandardMaterial, Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 
 import { ResourceRegistry } from '../../src/render/ResourceRegistry';
@@ -669,13 +669,19 @@ describe('landscape factory', () => {
 
     expect(liveMaterials.length).toBeGreaterThan(0);
     for (const material of liveMaterials) {
-      expect(material).toBeInstanceOf(MeshBasicMaterial);
+      expect(material).toBeInstanceOf(MeshStandardMaterial);
       expect(material.transparent).toBe(false);
       expect(material.opacity).toBe(1);
       expect(material.depthWrite).toBe(true);
     }
     expect(landscape.metrics.transparentObjects).toBe(0);
     expect(landscape.metrics.depthWriteDisabled).toBe(0);
+    const shadowCasters: Object3D[] = [];
+    landscape.root.traverse((object) => {
+      if (object.castShadow) shadowCasters.push(object);
+    });
+    expect(shadowCasters.length).toBeGreaterThan(0);
+    expect(shadowCasters.every(({ name }) => name.includes(':trunks'))).toBe(true);
 
     for (const detail of [
       'stone-bench',

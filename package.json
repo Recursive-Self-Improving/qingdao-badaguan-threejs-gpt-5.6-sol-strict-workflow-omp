@@ -25,7 +25,8 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "test:browser": "playwright test --config playwright.config.ts",
-    "test:visual": "playwright test --config playwright.visual.config.ts"
+    "test:visual": "playwright test --config playwright.visual.config.ts",
+    "test:visual:c07": "playwright test --config playwright.c07.config.ts"
   },
   "dependencies": {
     "three": "0.185.1"

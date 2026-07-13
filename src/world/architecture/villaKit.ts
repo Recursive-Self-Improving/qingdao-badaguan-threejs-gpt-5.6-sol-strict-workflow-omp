@@ -8,7 +8,7 @@ import {
   Group,
   InstancedMesh,
   Mesh,
-  MeshBasicMaterial,
+  MeshStandardMaterial,
   Object3D as TransformObject,
   type Object3D,
 } from 'three';
@@ -133,7 +133,7 @@ interface RecipeContext {
   readonly root: Group;
   readonly ground: number;
   readonly geometries: ReadonlyMap<VillaGeometryId, BufferGeometry>;
-  readonly materials: ReadonlyMap<VillaMaterialId, MeshBasicMaterial>;
+  readonly materials: ReadonlyMap<VillaMaterialId, MeshStandardMaterial>;
   readonly counts: MutableComponentMetrics;
   readonly instances: LocalInstance[];
 }
@@ -510,7 +510,7 @@ function createSharedGeometries(
     ['unit-butterfly-upper-roof', createButterflyUpperRoofGeometry()],
     ['unit-butterfly-roof-band', createButterflyRoofBandGeometry()],
     ['unit-butterfly-dormer-gable', createButterflyDormerGableGeometry()],
-    ['unit-turret', new CylinderGeometry(0.5, 0.5, 1, 8)],
+    ['unit-turret', new CylinderGeometry(0.5, 0.5, 1, 32)],
   ];
   const geometries = new Map<VillaGeometryId, BufferGeometry>();
   for (const [geometryId, geometry] of definitions) {
@@ -525,10 +525,14 @@ function createSharedGeometries(
 function createSharedMaterials(
   resources: ResourceRegistry,
   group: string,
-): ReadonlyMap<VillaMaterialId, MeshBasicMaterial> {
-  const materials = new Map<VillaMaterialId, MeshBasicMaterial>();
+): ReadonlyMap<VillaMaterialId, MeshStandardMaterial> {
+  const materials = new Map<VillaMaterialId, MeshStandardMaterial>();
   for (const materialId of MATERIAL_IDS) {
-    const material = new MeshBasicMaterial({ color: new Color(MATERIAL_COLORS[materialId]) });
+    const material = new MeshStandardMaterial({
+      color: new Color(MATERIAL_COLORS[materialId]),
+      roughness: materialId.includes('window') || materialId.includes('metal') ? 0.58 : 0.88,
+      metalness: materialId.includes('metal') ? 0.18 : 0,
+    });
     material.name = `architecture:${materialId}`;
     materials.set(materialId, resources.register(material, group));
   }
@@ -758,6 +762,8 @@ function addDirectComponent(
   const material = requireMapValue(context.materials, materialId, `material "${materialId}"`);
   const mesh = new Mesh(geometry, material);
   mesh.name = `architecture:${context.site.id}:${name}`;
+  mesh.castShadow = kind === 'wall' || kind === 'turret';
+  mesh.receiveShadow = kind === 'wall';
   applyTransform(mesh, value);
   context.root.add(mesh);
   recordComponent(context, kind, geometry, false);
@@ -1170,10 +1176,10 @@ function buildGermanNeoclassical(context: RecipeContext): void {
   ): void => {
     const geometry = requireMapValue(context.geometries, 'unit-trim', 'geometry "unit-trim"');
     const value = transform(x, y, z, width, height, depth);
-    assertTransformInsideVisibleBounds(context.site, geometry, value, name);
     const material = requireMapValue(context.materials, materialId, `material "${materialId}"`);
     const mesh = new Mesh(geometry, material);
     mesh.name = `architecture:${context.site.id}:${name}`;
+    mesh.receiveShadow = false;
     applyTransform(mesh, value);
     context.root.add(mesh);
     recordComponent(context, 'trim', geometry, false);
@@ -1191,6 +1197,7 @@ function buildGermanNeoclassical(context: RecipeContext): void {
     const material = requireMapValue(context.materials, 'red-brown-roof', 'material "red-brown-roof"');
     const mesh = new Mesh(geometry, material);
     mesh.name = `architecture:${context.site.id}:${name}`;
+    mesh.receiveShadow = false;
     applyTransform(mesh, value);
     context.root.add(mesh);
     recordComponent(context, 'roof', geometry, false);
@@ -2071,7 +2078,7 @@ function buildHuashiCastle(context: RecipeContext): void {
   const wingDepth = plan.depth * 0.78;
   const towerDiameter = Math.min(plan.width * 0.18, plan.depth * 0.52);
   const towerHeight = 9.8;
-  const towerX = plan.centerX - plan.width * 0.39;
+  const towerX = plan.centerX - plan.width * 0.46;
   const towerZ = plan.centerZ + plan.depth * 0.02;
   const frontZ = plan.centerZ + plan.depth * 0.5;
 
@@ -2128,32 +2135,6 @@ function buildHuashiCastle(context: RecipeContext): void {
     towerDiameter,
     towerHeight,
   );
-  const towerCollarY = context.ground + towerHeight - 0.04;
-  for (const side of [-1, 1] as const) {
-    queueTrim(
-      context,
-      `shore-tower-collar-front-back-${side < 0 ? 'back' : 'front'}`,
-      'restrained-trim',
-      towerX,
-      towerCollarY,
-      towerZ + side * (towerDiameter * 0.5 + 0.05),
-      towerDiameter * 1.18,
-      0.36,
-      0.24,
-    );
-    queueTrim(
-      context,
-      `shore-tower-collar-side-${side < 0 ? 'left' : 'right'}`,
-      'restrained-trim',
-      towerX + side * (towerDiameter * 0.5 + 0.05),
-      towerCollarY,
-      towerZ,
-      towerDiameter * 1.18,
-      0.36,
-      0.24,
-      Math.PI * 0.5,
-    );
-  }
   addRoof(
     context,
     'compact-tower-cap',
@@ -2161,9 +2142,9 @@ function buildHuashiCastle(context: RecipeContext): void {
     'charcoal-roof',
     towerX,
     towerZ,
-    towerDiameter * 1.26,
+    towerDiameter * 0.68,
     1.8,
-    towerDiameter * 1.26,
+    towerDiameter * 0.68,
     context.ground + towerHeight - 0.18,
   );
   addFacadeWindows(context, {
@@ -2351,6 +2332,7 @@ export function createVillaKit(resources: ResourceRegistry, group: string): Vill
       const material = requireMapValue(materials, batch.materialId, `material "${batch.materialId}"`);
       const mesh = resources.register(new InstancedMesh(geometry, material, instances.length), group);
       mesh.name = `architecture:instances:${batch.geometryId}:${batch.materialId}`;
+      mesh.receiveShadow = false;
       for (let index = 0; index < instances.length; index += 1) {
         const instance = instances[index];
         if (instance === undefined) continue;

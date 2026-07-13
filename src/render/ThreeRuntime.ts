@@ -1,9 +1,12 @@
 import {
   ACESFilmicToneMapping,
   Color,
+  Fog,
+  VSMShadowMap,
   ColorManagement,
   PerspectiveCamera,
   Scene,
+  Vector3,
   SRGBColorSpace,
   WebGLRenderer,
 } from 'three';
@@ -98,6 +101,13 @@ export interface ActiveLandscapeFrame {
   readonly rendererTriangles: number;
 }
 
+export interface ActiveEnvironmentFrame {
+  readonly viewId: string;
+  readonly rendererCalls: number;
+  readonly forward: readonly [number, number, number];
+  readonly rendererTriangles: number;
+}
+
 export interface WorldRuntimeMetrics {
   readonly roads: {
     readonly count: number;
@@ -170,6 +180,11 @@ export interface WorldRuntimeMetrics {
     readonly clearanceIntersections: number;
     readonly currentCameraClearanceIntersections: number;
   };
+  readonly environment?: WorldBuildResult['environment']['metrics'] & {
+    readonly activeFrame: ActiveEnvironmentFrame | null;
+    readonly cameraViews: WorldBuildResult['environment']['cameraViews'];
+  };
+  readonly coastEnvironment?: WorldBuildResult['coast']['metrics'];
 }
 
 export interface WorldNavigationProbe extends NavigationResult {
@@ -249,6 +264,8 @@ export class ThreeRuntime {
     this.frameCount += 1;
     this.options.onUpdate?.(frame);
     this.activeWorld?.landscape.update(frame);
+    this.activeWorld?.environment.update(frame);
+    this.activeWorld?.coast.update(frame);
     this.options.onRender?.(this);
     this.renderer.render(this.scene, this.camera);
     this.renderCount += 1;
@@ -267,6 +284,8 @@ export class ThreeRuntime {
   private lastProbe: WorldNavigationProbe | null = null;
   private lastWorldMetrics: WorldRuntimeMetrics | null = null;
   private activeArchitectureFrame: ActiveArchitectureFrame | null = null;
+  private activeEnvironmentFrame: ActiveEnvironmentFrame | null = null;
+  private readonly cameraForward = new Vector3();
   private lastDeltaSeconds = 0;
   private disposed = false;
   private loopRunning = false;
@@ -404,6 +423,7 @@ export class ThreeRuntime {
     try {
       this.scene.clear();
       this.scene.add(nextWorld.root);
+      this.applyWorldEnvironment(nextWorld);
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => {
@@ -430,6 +450,7 @@ export class ThreeRuntime {
     }
     this.renderer.render(this.scene, this.camera);
     this.renderCount += 1;
+    this.renderer.shadowMap.needsUpdate = true;
     this.publishDevelopmentMetrics();
     if (cleanupErrors.length !== 0) {
       throw new AggregateError(cleanupErrors, 'Scene rebuild committed but previous resources failed to dispose.');
@@ -439,6 +460,8 @@ export class ThreeRuntime {
   resetLandscape(): void {
     if (!import.meta.env.DEV || this.disposed) return;
     this.activeWorld?.landscape.reset();
+    this.activeWorld?.environment.reset();
+    this.activeWorld?.coast.reset();
     this.activeLandscapeFrame = null;
     this.publishDevelopmentMetrics();
   }
@@ -446,6 +469,8 @@ export class ThreeRuntime {
   setLandscapeCaptureTime(time: number | null): void {
     if (!import.meta.env.DEV || this.disposed) return;
     this.activeWorld?.landscape.setCaptureTime(time);
+    this.activeWorld?.environment.setCaptureTime(time);
+    this.activeWorld?.coast.setCaptureTime(time);
     this.publishDevelopmentMetrics();
   }
 
@@ -559,6 +584,65 @@ export class ThreeRuntime {
     this.publishDevelopmentMetrics();
     return this.lastProbe;
   }
+
+
+  frameEnvironmentProbe(
+    position: readonly [number, number, number],
+    target: readonly [number, number, number],
+    id = 'probe',
+  ): ActiveEnvironmentFrame | null {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
+    if (![...position, ...target].every(Number.isFinite)) return null;
+    this.activeWorld.debug.setVisible(false);
+    this.activeWorld.debug.setView(null);
+    this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
+    this.camera.position.set(...position);
+    this.camera.lookAt(...target);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
+    const frame = Object.freeze({
+      viewId: id,
+      forward: Object.freeze((() => {
+        const direction = this.camera.getWorldDirection(this.cameraForward);
+        return [direction.x, direction.y, direction.z] as const;
+      })()),
+      rendererCalls: this.renderer.info.render.calls,
+      rendererTriangles: this.renderer.info.render.triangles,
+    });
+    this.activeEnvironmentFrame = frame;
+    this.publishDevelopmentMetrics();
+    return frame;
+  }
+
+  frameEnvironment(viewId: string): ActiveEnvironmentFrame | null {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
+    const view = this.activeWorld.environment.cameraViews.find(({ id }) => id === viewId);
+    if (view === undefined) return null;
+    this.activeWorld.debug.setVisible(false);
+    this.activeWorld.debug.setView(null);
+    this.activeArchitectureFrame = null;
+    this.activeLandscapeFrame = null;
+    this.camera.position.set(...view.position);
+    this.camera.lookAt(...view.target);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
+    const frame = Object.freeze({
+      viewId,
+      forward: Object.freeze((() => {
+        const direction = this.camera.getWorldDirection(this.cameraForward);
+        return [direction.x, direction.y, direction.z] as const;
+      })()),
+      rendererCalls: this.renderer.info.render.calls,
+      rendererTriangles: this.renderer.info.render.triangles,
+    });
+    this.activeEnvironmentFrame = frame;
+    this.publishDevelopmentMetrics();
+    return frame;
+  }
+
   frameWorldDebugView(name: WorldDebugViewName): void {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return;
     this.activeArchitectureFrame = null;
@@ -604,7 +688,10 @@ export class ThreeRuntime {
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
-    this.scene.background = new Color(0x7d898b);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = VSMShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.scene.background = new Color(0xd8c7aa);
     this.camera.position.set(0, APP_CONFIG.camera.eyeHeight, APP_CONFIG.camera.neutralZ);
     this.camera.up.set(...APP_CONFIG.camera.worldUp);
     this.camera.rotation.set(0, 0, APP_CONFIG.camera.roll, 'YXZ');
@@ -615,6 +702,7 @@ export class ThreeRuntime {
     try {
       const world = this.dependencies.buildWorld(this.resources, group, this.landscapeSettings);
       this.scene.add(world.root);
+      this.applyWorldEnvironment(world);
       this.activeWorld = world;
       const spawn = world.navigation.spawn;
       this.resetDevelopmentFraming(world);
@@ -625,6 +713,7 @@ export class ThreeRuntime {
       );
       this.camera.rotation.set(0, world.data.spawnYaw, APP_CONFIG.camera.roll, 'YXZ');
       this.activeResourceGroup = group;
+      this.renderer.shadowMap.needsUpdate = true;
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(group));
@@ -651,10 +740,13 @@ export class ThreeRuntime {
     this.runCleanupStage(errors, () => this.clock.dispose());
     this.runCleanupStage(errors, () => this.activeWorld?.debug.setView(null));
     this.runCleanupStage(errors, () => this.activeWorld?.landscape.reset());
+    this.runCleanupStage(errors, () => this.activeWorld?.environment.reset());
+    this.runCleanupStage(errors, () => this.activeWorld?.coast.reset());
     this.activeArchitectureFrame = null;
     this.activeLandscapeFrame = null;
+    this.activeEnvironmentFrame = null;
     this.runCleanupStage(errors, () => {
-      this.lastWorldMetrics = this.worldMetrics();
+      if (this.activeWorld !== null) this.lastWorldMetrics = this.worldMetrics();
     });
     this.runCleanupStage(errors, () => {
       this.scene.clear();
@@ -677,6 +769,13 @@ export class ThreeRuntime {
       this.countedAsDisposed = true;
     }
     if (import.meta.env.DEV) delete this.canvas.dataset.threeRuntimeMetrics;
+  }
+
+  private applyWorldEnvironment(world: WorldBuildResult): void {
+    const environment = world.environment;
+    this.scene.background = environment.backgroundTexture;
+    this.scene.fog = new Fog(environment.fogColor, environment.fogNear, environment.fogFar);
+    this.renderer.toneMappingExposure = environment.metrics.exposure;
   }
 
   private resourceGroup(generation: number): string {
@@ -703,6 +802,8 @@ export class ThreeRuntime {
     const transverseCount = data.roads.filter((road) => road.orientation === 'east-west').length;
     const longitudinalCount = data.roads.length - transverseCount;
     const landscapeMetrics = landscape.metrics;
+    const environmentMetrics = world.environment.metrics;
+    const coastMetrics = world.coast.metrics;
     return {
       roads: {
         count: data.roads.length,
@@ -776,12 +877,19 @@ export class ThreeRuntime {
             kind !== 'camera'
             && circleIntersectsBounds(this.camera.position.x, this.camera.position.z, DEFAULT_CAMERA_RADIUS, bounds)).length,
         },
+        environment: {
+          ...environmentMetrics,
+          activeFrame: this.activeEnvironmentFrame,
+          cameraViews: world.environment.cameraViews,
+        },
+        coastEnvironment: coastMetrics,
       } : {}),
     };
   }
 
   private resetDevelopmentFraming(world: WorldBuildResult): void {
     this.lastProbe = null;
+    this.activeEnvironmentFrame = null;
     this.activeArchitectureFrame = null;
     this.activeLandscapeFrame = null;
     world.debug.setView(null);

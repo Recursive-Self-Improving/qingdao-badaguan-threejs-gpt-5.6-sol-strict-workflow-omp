@@ -234,6 +234,23 @@ export class AppController {
         if (typeof detail.view === 'string') this.runtime?.frameLandscape(detail.view);
         return;
       }
+      if (detail?.action === 'environment/probe') {
+        const position = detail.position;
+        const target = detail.target;
+        if (Array.isArray(position) && position.length === 3 && position.every((value) => typeof value === 'number' && Number.isFinite(value))
+          && Array.isArray(target) && target.length === 3 && target.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+          this.runtime?.frameEnvironmentProbe(
+            position as unknown as readonly [number, number, number],
+            target as unknown as readonly [number, number, number],
+            typeof detail.id === 'string' ? detail.id : 'probe',
+          );
+        }
+        return;
+      }
+      if (detail?.action === 'environment/frame') {
+        if (typeof detail.view === 'string') this.runtime?.frameEnvironment(detail.view);
+        return;
+      }
       if (detail?.action === 'world-debug/set-visible') {
         if (typeof detail.visible === 'boolean') this.runtime?.setWorldDebugVisible(detail.visible);
         return;

@@ -168,7 +168,7 @@ test('starts with fixed upright camera defaults', async ({ page }) => {
   const value = await waitForMetrics(page);
 
   expect(value.camera.fov).toBe(65);
-  expect(value.camera.near).toBe(0.08);
+  expect(value.camera.near).toBe(0.15);
   expect(value.camera.far).toBe(550);
   expect(value.camera.position).toEqual([0, 1.68, 5]);
   expect(value.camera.up).toEqual([0, 1, 0]);

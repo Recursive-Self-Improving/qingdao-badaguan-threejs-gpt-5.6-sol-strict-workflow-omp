@@ -23,6 +23,7 @@ interface RendererDouble {
   outputColorSpace: unknown;
   toneMapping: unknown;
   toneMappingExposure: number;
+  readonly shadowMap: { enabled: boolean; type: unknown; autoUpdate: boolean; needsUpdate: boolean };
   readonly setAnimationLoop: Mock<(callback: FrameRequestCallback | null) => void>;
   readonly render: Mock<(...args: unknown[]) => void>;
   readonly dispose: Mock<() => void>;
@@ -41,6 +42,7 @@ function createRenderer(): RendererDouble {
     outputColorSpace: null,
     toneMapping: null,
     toneMappingExposure: 0,
+    shadowMap: { enabled: false, type: null, autoUpdate: true, needsUpdate: false },
     setAnimationLoop: vi.fn(),
     render: vi.fn(() => {
       info.render.calls = 1;
@@ -147,6 +149,28 @@ function worldBuild(settings: LandscapeSettings = Object.freeze({ density: 'high
     data: DISTRICT_DATA,
     architecture: architectureBuild(),
     landscape: landscapeBuild(settings),
+    environment: {
+      root: new Group(),
+      config: {} as never,
+      metrics: Object.freeze({ quality: settings.density, motion: settings.motion, sunDirection: Object.freeze([1, -1, 0] as const), fogNear: 105, fogFar: 430, exposure: 1.08, shadowMapSize: 2048, shadowBias: -0.00016, shadowNormalBias: 0.028, contactGrounding: true }),
+      cameraViews: Object.freeze([{ id: 'spawn' as const, position: Object.freeze([0, 4, 5] as const), target: Object.freeze([0, 4, -40] as const) }]),
+      backgroundColor: 0xd8c7aa,
+      fogColor: 0xb9c0bb,
+      backgroundTexture: null as never,
+      fogNear: 105,
+      fogFar: 430,
+      update: vi.fn(),
+      reset: vi.fn(),
+      setCaptureTime: vi.fn(),
+    },
+    coast: {
+      root: new Group(),
+      config: {} as never,
+      metrics: Object.freeze({ quality: settings.density, motion: settings.motion, waterMotionAmplitude: settings.motion === 'reduced' ? 0 : 0.018, waterTransformChecksum: 1, waterSegments: 8, beachLayers: 1, horizonLayers: 1, openingCount: 3, clearanceIntersections: 0, collidable: false }),
+      update: vi.fn(),
+      reset: vi.fn(),
+      setCaptureTime: vi.fn(),
+    },
     debug: {
       root: new Group(),
       get visible() { return visible; },
@@ -229,6 +253,28 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(renderer.setAnimationLoop).toHaveBeenNthCalledWith(1, expect.any(Function));
     expect(renderer.setAnimationLoop).toHaveBeenLastCalledWith(null);
     expect(removeListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+    expect(viewport.dispose).toHaveBeenCalledTimes(1);
+    expect(resourceDispose).toHaveBeenCalledTimes(1);
+    expect(renderer.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the original initial world-build error without requesting absent world metrics', () => {
+    const renderer = createRenderer();
+    const viewport = createViewport();
+    const resourceDispose = vi.fn();
+    const failure = new Error('initial world failed');
+    let thrown: unknown;
+    try {
+      new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, (resources, group) => {
+        resources.register(disposable(resourceDispose), group);
+        throw failure;
+      }));
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(failure);
+    expect(viewport.start).not.toHaveBeenCalled();
     expect(viewport.dispose).toHaveBeenCalledTimes(1);
     expect(resourceDispose).toHaveBeenCalledTimes(1);
     expect(renderer.dispose).toHaveBeenCalledTimes(1);
@@ -606,6 +652,10 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(runtime.camera.rotation.z).toBe(0);
     expect(renderer.render).toHaveBeenCalledWith(runtime.scene, runtime.camera);
 
+    const environmentFrame = runtime.frameEnvironment('spawn');
+    expect(environmentFrame?.forward[0]).toBeCloseTo(0);
+    expect(environmentFrame?.forward[1]).toBeCloseTo(0);
+    expect(environmentFrame?.forward[2]).toBeCloseTo(-1);
     runtime.rebuildScene();
     expect(runtime.worldBuildResult).toBe(builds[1]);
     expect(runtime.metrics.world.debug).toMatchObject({
@@ -760,7 +810,7 @@ describe('ThreeRuntime lifecycle safety', () => {
 
     expect(APP_CONFIG.camera).toEqual({
       fov: 65,
-      near: 0.08,
+      near: 0.15,
       far: 550,
       eyeHeight: 1.68,
       neutralZ: 5,
@@ -768,7 +818,7 @@ describe('ThreeRuntime lifecycle safety', () => {
       roll: 0,
     });
     expect(runtime.camera.fov).toBe(65);
-    expect(runtime.camera.near).toBe(0.08);
+    expect(runtime.camera.near).toBe(0.15);
     expect(runtime.camera.far).toBe(550);
     expect(runtime.camera.position.toArray()).toEqual([0, 1.68, 5]);
     expect(runtime.camera.up.toArray()).toEqual([0, 1, 0]);

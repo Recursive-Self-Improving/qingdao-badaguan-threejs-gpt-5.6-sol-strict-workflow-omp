@@ -26,7 +26,7 @@ export function createTerrain(resources: ResourceRegistry, group: string): Objec
 
   for (let row = 0; row < TERRAIN_ROWS; row += 1) {
     const z = worldBounds.minZ
-      + (row / (TERRAIN_ROWS - 1)) * (worldBounds.maxZ - worldBounds.minZ);
+      + (row / (TERRAIN_ROWS - 1)) * (DISTRICT_DATA.coast.edgeZ - worldBounds.minZ);
     for (let column = 0; column < TERRAIN_COLUMNS; column += 1) {
       const x = worldBounds.minX
         + (column / (TERRAIN_COLUMNS - 1)) * (worldBounds.maxX - worldBounds.minX);
@@ -55,13 +55,17 @@ export function createTerrain(resources: ResourceRegistry, group: string): Objec
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
   geometry.setIndex(new Uint32BufferAttribute(indices, 1));
-  geometry.computeVertexNormals();
+  const normals = new Float32Array(positions.length);
+  for (let index = 1; index < normals.length; index += 3) normals[index] = 1;
+  geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   resources.register(geometry, group);
 
   const material = resources.register(new MeshBasicMaterial({
     color: new Color(0xb7b09b),
+    fog: false,
   }), group);
   const terrain = new Mesh(geometry, material);
+  terrain.receiveShadow = false;
   terrain.name = 'district-terrain';
 
   const root = new Group();

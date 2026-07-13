@@ -5,7 +5,7 @@ import {
   DynamicDrawUsage,
   Group,
   InstancedMesh,
-  MeshBasicMaterial,
+  MeshStandardMaterial,
   Object3D as TransformObject,
   SphereGeometry,
   type BufferGeometry,
@@ -213,7 +213,7 @@ interface RenderBatch {
   readonly geometryId: VegetationGeometryId;
   readonly materialId: VegetationMaterialId;
   readonly items: readonly RenderBatchItem[];
-  readonly mesh: InstancedMesh<BufferGeometry, MeshBasicMaterial>;
+  readonly mesh: InstancedMesh<BufferGeometry, MeshStandardMaterial>;
   readonly dynamic: boolean;
 }
 
@@ -1069,21 +1069,23 @@ function createSharedGeometries(
 function createSharedMaterials(
   resources: ResourceRegistry,
   group: string,
-): ReadonlyMap<VegetationMaterialId, MeshBasicMaterial> {
+): ReadonlyMap<VegetationMaterialId, MeshStandardMaterial> {
   const definitions: readonly (readonly [VegetationMaterialId, string])[] = [
     ['trunk-palette', 'vegetation:trunk-palette'],
     ['avenue-plane-trunk-palette', 'vegetation:avenue-plane-trunk-palette'],
     ['foliage-palette', 'vegetation:foliage-palette'],
     ['accent-palette', 'vegetation:accent-palette'],
   ];
-  const materials = new Map<VegetationMaterialId, MeshBasicMaterial>();
+  const materials = new Map<VegetationMaterialId, MeshStandardMaterial>();
   for (const [materialId, name] of definitions) {
-    const material = new MeshBasicMaterial({
+    const material = new MeshStandardMaterial({
       color: new Color(0xffffff),
       transparent: false,
       opacity: 1,
       depthWrite: true,
       depthTest: true,
+      roughness: materialId.includes('trunk') ? 0.96 : 0.9,
+      metalness: 0,
     });
     material.name = name;
     materials.set(materialId, resources.register(material, group));
@@ -1161,7 +1163,7 @@ function createRenderBatches(
   root: Group,
   instances: readonly VegetationLayoutInstance[],
   geometries: ReadonlyMap<VegetationGeometryId, BufferGeometry>,
-  materials: ReadonlyMap<VegetationMaterialId, MeshBasicMaterial>,
+  materials: ReadonlyMap<VegetationMaterialId, MeshStandardMaterial>,
 ): readonly RenderBatch[] {
   const grounded = instances.map((instance) => Object.freeze({
     instance,
@@ -1209,6 +1211,8 @@ function createRenderBatches(
     const mesh = resources.register(new InstancedMesh(geometry, material, definition.items.length), group);
     mesh.name = `vegetation:instances:${ACTIVE_LOD_BAND_ID}:${definition.id}`;
     mesh.userData.collidable = false;
+    mesh.castShadow = definition.geometryId === 'trunk';
+    mesh.receiveShadow = true;
     if (definition.dynamic) mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     for (let index = 0; index < definition.items.length; index += 1) {
       const item = definition.items[index];
