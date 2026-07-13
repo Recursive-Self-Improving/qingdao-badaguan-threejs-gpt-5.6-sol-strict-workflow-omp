@@ -65,6 +65,8 @@ export interface ThreeRuntimeMetrics {
     readonly far: number;
     readonly position: readonly [number, number, number];
     readonly up: readonly [number, number, number];
+    readonly pitch: number;
+    readonly yaw: number;
     readonly roll: number;
   };
   readonly frame: {
@@ -388,6 +390,8 @@ export class ThreeRuntime {
         far: this.camera.far,
         position: [position.x, position.y, position.z],
         up: [up.x, up.y, up.z],
+        pitch: this.camera.rotation.x,
+        yaw: this.camera.rotation.y,
         roll: this.camera.rotation.z,
       },
       frame: {

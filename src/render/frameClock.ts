@@ -1,4 +1,6 @@
-export const DEFAULT_MAX_FRAME_DELTA_SECONDS = 0.1;
+import { APP_CONFIG } from '../app/config';
+
+export const DEFAULT_MAX_FRAME_DELTA_SECONDS = APP_CONFIG.controls.maxDeltaSeconds;
 
 export interface FrameClockOptions {
   /** Maximum simulation time a single rendered frame may consume. */

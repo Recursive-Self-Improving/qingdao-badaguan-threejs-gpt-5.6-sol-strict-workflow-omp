@@ -296,7 +296,7 @@ export function reduceAppState(state: AppState, event: AppEvent): AppTransitionR
       return result(state, null);
     case 'paused':
       if (event.type === 'RESUME') {
-        return result(state, { kind: 'exploring', control: state.resumeControl });
+        return result(state, { kind: 'exploring', control: 'drag', fallbackReason: 'initial' });
       }
       if (
         event.type === 'POINTER_UNLOCKED' ||
@@ -362,7 +362,7 @@ export function reduceAppState(state: AppState, event: AppEvent): AppTransitionR
         if (event.type === 'RESUME') {
           return result(state, {
             ...state,
-            underlying: { kind: 'exploring', control: underlying.resumeControl },
+            underlying: { kind: 'exploring', control: 'drag', fallbackReason: 'initial' },
           });
         }
         if (

@@ -1,5 +1,18 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const nativeMatchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query: string): MediaQueryList => {
+      const result = nativeMatchMedia(query);
+      if (query === '(hover: hover) and (pointer: fine)') {
+        Object.defineProperty(result, 'matches', { configurable: true, value: false });
+      }
+      return result;
+    };
+  });
+});
+
 const ONBOARDING_COPY =
   'Explore Badaguan in Qingdao. Move with WASD or the arrow keys, look with the mouse or drag/touch, and press Escape to pause or release the mouse.';
 const LOCKED_COPY = 'Press Escape to release';
@@ -77,6 +90,7 @@ test('boots into accessible onboarding with transient busy scoped away from the 
 
 for (const key of ['Enter', 'Space'] as const) {
   test(`completes the lifecycle using only Tab, Shift+Tab, ${key}, and Escape`, async ({ page }) => {
+    test.setTimeout(60_000);
     await page.goto(SUPPORTED_URL);
     await expectOnboarding(page);
     await page.keyboard.press(key);

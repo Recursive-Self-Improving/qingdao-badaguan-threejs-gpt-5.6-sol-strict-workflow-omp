@@ -76,7 +76,7 @@ function expectedNextState(state: AppState, event: AppEvent): AppState | null {
       return event.type === 'PAUSE' ? { kind: 'paused', resumeControl: state.control } : null;
     }
     case 'paused':
-      if (event.type === 'RESUME') return { kind: 'exploring', control: state.resumeControl };
+      if (event.type === 'RESUME') return { kind: 'exploring', control: 'drag', fallbackReason: 'initial' };
       if (event.type === 'POINTER_UNLOCKED' || event.type === 'POINTER_LOCK_DENIED' || event.type === 'POINTER_LOCK_ERROR') return state.resumeControl === 'drag' ? null : { kind: 'paused', resumeControl: 'drag' };
       return null;
     case 'degraded': {
@@ -192,7 +192,7 @@ describe('app state contract', () => {
     );
   });
 
-  it('pauses and resumes the current projection while unlock during pause removes stale lock', () => {
+  it('resumes in keyboard fallback until a new document lock confirmation', () => {
     const paused = transition(
       { kind: 'exploring', control: 'locked' },
       { type: 'PAUSE' },
@@ -200,7 +200,8 @@ describe('app state contract', () => {
     expect(paused).toEqual({ kind: 'paused', resumeControl: 'locked' });
     expect(transition(paused, { type: 'RESUME' })).toEqual({
       kind: 'exploring',
-      control: 'locked',
+      control: 'drag',
+      fallbackReason: 'initial',
     });
 
     const unlockedPause = transition(paused, { type: 'POINTER_UNLOCKED' });
@@ -208,6 +209,7 @@ describe('app state contract', () => {
     expect(transition(unlockedPause, { type: 'RESUME' })).toEqual({
       kind: 'exploring',
       control: 'drag',
+      fallbackReason: 'initial',
     });
   });
 
@@ -253,7 +255,7 @@ describe('app state contract', () => {
     });
     expect(transition(degradedPaused, { type: 'RESUME' })).toMatchObject({
       kind: 'degraded',
-      underlying: { kind: 'exploring', control: 'drag' },
+      underlying: { kind: 'exploring', control: 'drag', fallbackReason: 'initial' },
     });
   });
 

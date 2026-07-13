@@ -96,6 +96,7 @@ const ONBOARDING_GUIDE: readonly ControlGuideItem[] = [
   { input: 'WASD / arrows', purpose: 'Move along the garden roads' },
   { input: 'Mouse', purpose: 'Look around when mouse control is confirmed' },
   { input: 'Drag / touch', purpose: 'Look around with the cursor available' },
+  { input: 'R', purpose: 'Return to the safe reset point' },
   { input: 'Escape', purpose: 'Pause or release the mouse' },
 ];
 
@@ -104,6 +105,7 @@ const NO_GUIDE: readonly ControlGuideItem[] = [];
 const HELP_ITEMS = [
   ['Move', 'Use WASD or the arrow keys.'],
   ['Look', 'Use the mouse when mouse control is confirmed, or drag/touch with the cursor available.'],
+  ['Reset', 'Press R to return to the safe reset point.'],
   ['Pause', 'Press Escape to pause or release the mouse.'],
   ['Fallback', 'If mouse lock is denied or fails, drag and keyboard or touch exploration remains available.'],
 ] as const;

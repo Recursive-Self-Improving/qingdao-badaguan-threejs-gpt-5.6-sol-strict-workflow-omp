@@ -9,6 +9,12 @@ import { detectCapabilities, type CapabilityDetectionOptions } from '../platform
 import { detectPreferences, type PreferenceSnapshot } from '../platform/preferences';
 import { createAppUI, type AppUI, type AppUIAction } from '../ui/AppUI';
 import { ThreeRuntime } from '../render/ThreeRuntime';
+import { APP_CONFIG } from './config';
+import { DEFAULT_CAMERA_RADIUS } from '../exploration/navigation';
+import { InputController } from '../exploration/InputController';
+import { MovementController } from '../exploration/MovementController';
+import { PointerLockLook, type PointerLockOutcome } from '../exploration/PointerLockLook';
+import type { InputClearReason } from '../exploration/types';
 
 type DevelopmentScenario =
   | 'unsupported'
@@ -64,6 +70,9 @@ export class AppController {
   private readonly preferences: PreferenceSnapshot;
   private readonly ui: AppUI;
   private runtime: ThreeRuntime | null = null;
+  private inputController: InputController | null = null;
+  private pointerLockLook: PointerLockLook | null = null;
+  private movementController: MovementController | null = null;
   private destroyed = false;
   private developmentRuntimeCleanup: (() => void) | null = null;
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -132,7 +141,9 @@ export class AppController {
     }
 
     const transitioned = this.dispatch(action);
-    if (transitioned && action.type === 'START_EXPLORING') {
+    if (!transitioned) return;
+    if (action.type === 'START_EXPLORING' || action.type === 'RESUME') {
+      if (this.scenario === null && this.hasFinePointer()) this.pointerLockLook?.requestLock();
       this.applyExplorationScenario();
     }
   }
@@ -315,16 +326,59 @@ export class AppController {
       return false;
     }
 
+    let runtime: ThreeRuntime | null = null;
+    let input: InputController | null = null;
+    let look: PointerLockLook | null = null;
+    let movement: MovementController | null = null;
     try {
-      this.runtime = new ThreeRuntime(canvas, {
+      runtime = new ThreeRuntime(canvas, {
+        onUpdate: (frame) => this.movementController?.update(frame.deltaSeconds),
         landscapeSettings: Object.freeze({
           density: 'high',
           motion: this.preferences.prefersReducedMotion ? 'reduced' : 'standard',
         }),
       });
+      const world = runtime.worldBuildResult;
+      if (world === null) throw new Error('The graphics world was not initialized.');
+      input = new InputController({
+        canvas,
+        onClear: (reason) => this.handleInputClear(reason),
+      });
+      movement = new MovementController({
+        camera: runtime.camera,
+        input,
+        navigation: world.navigation,
+        spawnPose: { position: world.navigation.spawn, yaw: world.data.spawnYaw },
+        resetPose: { position: world.navigation.reset, yaw: world.data.resetYaw },
+        eyeHeight: APP_CONFIG.camera.eyeHeight,
+        walkSpeed: APP_CONFIG.controls.walkSpeed,
+        cameraRadius: DEFAULT_CAMERA_RADIUS,
+        maxPitchRadians: APP_CONFIG.controls.maxPitchRadians,
+        maxDeltaSeconds: APP_CONFIG.controls.maxDeltaSeconds,
+      });
+      look = new PointerLockLook({
+        target: canvas,
+        sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel,
+        onLook: (delta) => this.movementController?.applyLook(delta),
+        onOutcome: (outcome) => this.handlePointerLockOutcome(outcome),
+      });
+      this.runtime = runtime;
+      this.inputController = input;
+      this.movementController = movement;
+      this.pointerLockLook = look;
+      input.start();
+      look.start();
+      this.syncExplorationControllers();
       return true;
     } catch {
-      this.disposeRuntime();
+      this.runtime = null;
+      this.inputController = null;
+      this.movementController = null;
+      this.pointerLockLook = null;
+      look?.dispose();
+      input?.dispose();
+      movement?.setActive(false);
+      runtime?.dispose();
       this.dispatch({ type: 'FATAL', reason: 'The graphics runtime could not be created.' });
       return false;
     }
@@ -332,19 +386,66 @@ export class AppController {
 
   private disposeRuntime(): void {
     const runtime = this.runtime;
+    const input = this.inputController;
+    const movement = this.movementController;
+    const look = this.pointerLockLook;
     this.runtime = null;
+    this.inputController = null;
+    this.movementController = null;
+    this.pointerLockLook = null;
+    look?.releaseLock();
+    look?.dispose();
+    input?.dispose();
+    movement?.setActive(false);
     runtime?.dispose();
   }
 
   private dispatch(event: AppEvent): boolean {
     const transition = reduceAppState(this.state, event);
-    if (!transition.transitioned) {
-      return false;
-    }
-
+    if (!transition.transitioned) return false;
     this.state = transition.state;
+    this.syncExplorationControllers();
     this.ui.render({ state: transition.state, invariant: transition.invariant });
     return true;
+  }
+
+  private syncExplorationControllers(): void {
+    const exploring = getAppStateInvariant(this.state).isExploring;
+    this.inputController?.setEnabled(exploring);
+    this.movementController?.setActive(exploring);
+    this.pointerLockLook?.setEnabled(exploring);
+    if (!exploring) this.pointerLockLook?.releaseLock();
+  }
+
+  private handleInputClear(reason: InputClearReason): void {
+    this.movementController?.invalidateResumeDelta();
+    if ((reason === 'blur' || reason === 'hidden') && getAppStateInvariant(this.state).isExploring) {
+      this.dispatch({ type: 'PAUSE' });
+    }
+  }
+
+  private handlePointerLockOutcome(outcome: PointerLockOutcome): void {
+    switch (outcome) {
+      case 'locked':
+        this.dispatch({ type: 'POINTER_LOCK_CONFIRMED' });
+        return;
+      case 'unlocked':
+        if (!getAppStateInvariant(this.state).isExploring) return;
+        this.inputController?.clear('lock-exit');
+        this.dispatch({ type: 'PAUSE' });
+        return;
+      case 'denied':
+        this.inputController?.clear('lock-exit');
+        this.dispatch({ type: 'POINTER_LOCK_DENIED' });
+        return;
+      case 'error':
+        this.inputController?.clear('lock-exit');
+        this.dispatch({ type: 'POINTER_LOCK_ERROR' });
+    }
+  }
+
+  private hasFinePointer(): boolean {
+    return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   }
 
   private render(): void {

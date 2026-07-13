@@ -31,6 +31,13 @@ export const APP_CONFIG = {
     worldUp: [0, 1, 0] as const,
     roll: 0,
   },
+  controls: {
+    walkSpeed: 3.2,
+    lookSensitivityRadiansPerPixel: 0.002,
+    maxPitchRadians: 85 * Math.PI / 180,
+    maxDeltaSeconds: 0.1,
+    resetCode: 'KeyR',
+  },
 } as const;
 
 export const ATMOSPHERE_CONFIG: AtmosphereConfig = Object.freeze({
