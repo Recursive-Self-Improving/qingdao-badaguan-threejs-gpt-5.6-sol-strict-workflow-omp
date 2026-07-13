@@ -369,6 +369,7 @@ describe('ThreeRuntime lifecycle safety', () => {
       readonly child: Group | undefined;
       readonly committedWorld: WorldBuildResult | null;
       readonly publishedMetrics: string | undefined;
+      readonly shadowRefreshRequested: boolean;
     }> = [];
     renderer.render.mockImplementation((scene) => {
       const renderedScene = scene as Scene;
@@ -376,6 +377,7 @@ describe('ThreeRuntime lifecycle safety', () => {
         child: renderedScene.children[0] as Group | undefined,
         committedWorld: runtime.worldBuildResult,
         publishedMetrics: canvas.dataset.threeRuntimeMetrics,
+        shadowRefreshRequested: renderer.shadowMap.needsUpdate,
       });
       renderer.info.render.calls = 2;
       renderer.info.render.triangles = 345;
@@ -388,6 +390,8 @@ describe('ThreeRuntime lifecycle safety', () => {
     }));
     const publishedBeforeRebuild = canvas.dataset.threeRuntimeMetrics;
     const rendersBeforeRebuild = runtime.metrics.runtime.renders;
+    expect(renderer.shadowMap.autoUpdate).toBe(false);
+    renderer.shadowMap.needsUpdate = false;
 
     runtime.rebuildScene(Object.freeze({ density: 'low', motion: 'standard' }));
 
@@ -395,6 +399,7 @@ describe('ThreeRuntime lifecycle safety', () => {
       child: rebuilt.root,
       committedWorld: rebuilt,
       publishedMetrics: publishedBeforeRebuild,
+      shadowRefreshRequested: true,
     }]);
     expect(runtime.metrics.runtime.renders).toBe(rendersBeforeRebuild + 1);
     expect(runtime.metrics.world.architecture?.renderInfo).toEqual({ calls: 2, triangles: 345 });
@@ -669,6 +674,62 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(runtime.worldBuildResult).toBeNull();
     expect(runtime.scene.children).toEqual([]);
     expect(runtime.metrics.world.roads.count).toBe(10);
+  });
+
+  it('keeps development camera frames mutually exclusive across framing and navigation commands', () => {
+    const renderer = createRenderer();
+    const viewport = createViewport();
+    const world = worldBuild();
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => world));
+    const landscapeView = world.landscape.cameraViews[0];
+    if (landscapeView === undefined) throw new Error('Missing landscape camera view');
+
+    const environmentFrame = runtime.frameEnvironmentProbe([0, 3, 0], [4, 3, -4], 'diagonal');
+    expect(environmentFrame?.forward).toEqual([
+      expect.closeTo(Math.SQRT1_2),
+      expect.closeTo(0),
+      expect.closeTo(-Math.SQRT1_2),
+    ]);
+
+    const landscapeFrame = runtime.frameLandscape(landscapeView.id);
+    expect(runtime.metrics.world.environment?.activeFrame).toBeNull();
+    expect(runtime.metrics.world.landscape?.activeFrame).toEqual(landscapeFrame);
+    expect(runtime.frameArchitecture('not-a-subject', 'front')).toBeNull();
+    expect(runtime.frameEnvironment('not-a-view')).toBeNull();
+    expect(runtime.metrics.world.landscape?.activeFrame).toEqual(landscapeFrame);
+
+    runtime.frameEnvironmentProbe([0, 3, 0], [4, 3, -4], 'before-architecture');
+    const architectureFrame = runtime.frameArchitecture('villa-west-neoclassical', 'front');
+    expect(runtime.metrics.world.environment?.activeFrame).toBeNull();
+    expect(runtime.metrics.world.architecture?.activeFrame).toEqual(architectureFrame);
+    expect(runtime.frameLandscape('not-a-view')).toBeNull();
+    expect(runtime.metrics.world.architecture?.activeFrame).toEqual(architectureFrame);
+
+    runtime.frameEnvironmentProbe([0, 3, 0], [4, 3, -4], 'before-debug');
+    runtime.frameWorldDebugView('grid');
+    expect(runtime.metrics.world.environment?.activeFrame).toBeNull();
+    expect(runtime.metrics.world.architecture?.activeFrame).toBeNull();
+    expect(runtime.metrics.world.landscape?.activeFrame).toBeNull();
+    expect(runtime.metrics.world.debug).toMatchObject({ visible: true, activeView: 'grid' });
+
+    runtime.frameEnvironmentProbe([0, 3, 0], [4, 3, -4], 'before-navigation');
+    const navigationForward = runtime.metrics.world.environment?.activeFrame?.forward;
+    const navigationProbe = runtime.probeWorldNavigation({ x: 10, z: -10 });
+    expect(navigationProbe).not.toBeNull();
+    expect(runtime.metrics.world.environment?.activeFrame).toBeNull();
+    const cameraForward = runtime.camera.getWorldDirection(new Group().position).toArray();
+    expect(cameraForward).toEqual(navigationForward?.map((component) => expect.closeTo(component)));
+
+    runtime.frameEnvironmentProbe([0, 3, 0], [4, 3, -4], 'before-anchor');
+    const anchor = world.data.routeAnchors[0];
+    if (anchor === undefined) throw new Error('Missing route anchor');
+    expect(runtime.visitWorldAnchor(anchor.id)).toBe(anchor);
+    expect(runtime.metrics.world.environment?.activeFrame).toBeNull();
+
+    runtime.frameEnvironmentProbe([0, 3, 0], [4, 3, -4], 'before-debug-toggle');
+    runtime.setWorldDebugVisible(true);
+    expect(runtime.metrics.world.environment?.activeFrame).toBeNull();
+    runtime.dispose();
   });
 
   it('threads startup settings and updates landscape between onUpdate and onRender', () => {

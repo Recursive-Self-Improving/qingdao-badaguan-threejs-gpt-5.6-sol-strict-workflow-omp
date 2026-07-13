@@ -448,9 +448,9 @@ export class ThreeRuntime {
     if (previousGroup !== null) {
       this.runCleanupStage(cleanupErrors, () => this.resources.disposeGroup(previousGroup));
     }
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
     this.renderCount += 1;
-    this.renderer.shadowMap.needsUpdate = true;
     this.publishDevelopmentMetrics();
     if (cleanupErrors.length !== 0) {
       throw new AggregateError(cleanupErrors, 'Scene rebuild committed but previous resources failed to dispose.');
@@ -478,9 +478,9 @@ export class ThreeRuntime {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
     const view = this.activeWorld.landscape.cameraViews.find((candidate) => candidate.id === viewId);
     if (view === undefined || view.ySemantics !== 'world') return null;
+    this.selectDevelopmentFrame('landscape');
     this.activeWorld.debug.setVisible(false);
     this.activeWorld.debug.setView(null);
-    this.activeArchitectureFrame = null;
     this.lastProbe = null;
     this.camera.position.set(...view.position);
     this.camera.lookAt(...view.target);
@@ -503,8 +503,7 @@ export class ThreeRuntime {
 
   setWorldDebugVisible(visible: boolean): void {
     if (!import.meta.env.DEV || this.disposed) return;
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
+    this.selectDevelopmentFrame(null);
     this.activeWorld?.debug.setVisible(visible);
     if (!visible) this.activeWorld?.debug.setView(null);
     this.publishDevelopmentMetrics();
@@ -512,7 +511,6 @@ export class ThreeRuntime {
 
   frameArchitecture(subjectId: string, view: ArchitectureFrameView): ActiveArchitectureFrame | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
-    this.activeLandscapeFrame = null;
     if (!Object.prototype.hasOwnProperty.call(this.activeWorld.architecture.cameraViews, subjectId)) return null;
     const typedSubjectId = subjectId as ArchitectureSubjectId;
     const subjectViews = this.activeWorld.architecture.cameraViews[typedSubjectId];
@@ -521,6 +519,7 @@ export class ThreeRuntime {
     if (cameraView.ySemantics !== 'site-ground-relative') return null;
     const site = this.activeWorld.data.architectureSites.find(({ id }) => id === typedSubjectId);
     if (site === undefined) return null;
+    this.selectDevelopmentFrame('architecture');
     this.activeWorld.debug.setVisible(false);
     this.activeWorld.debug.setView(null);
     this.lastProbe = null;
@@ -554,19 +553,18 @@ export class ThreeRuntime {
 
   visitWorldAnchor(anchorId: string): RouteAnchor | null {
     if (!import.meta.env.DEV || this.disposed) return null;
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
     const anchor = this.activeWorld?.debug.visitAnchor(anchorId) ?? null;
+    if (anchor === null) return null;
+    this.selectDevelopmentFrame(null);
     this.activeWorld?.debug.setView(null);
-    if (anchor !== null) this.moveCameraTo(anchor.position);
+    this.moveCameraTo(anchor.position);
     this.publishDevelopmentMetrics();
     return anchor;
   }
 
   probeWorldNavigation(requested: Vec2, radius?: number, from?: Vec2): WorldNavigationProbe | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
+    this.selectDevelopmentFrame(null);
     const validFrom = from !== undefined
       && Number.isFinite(from.x)
       && Number.isFinite(from.z);
@@ -593,10 +591,9 @@ export class ThreeRuntime {
   ): ActiveEnvironmentFrame | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
     if (![...position, ...target].every(Number.isFinite)) return null;
+    this.selectDevelopmentFrame('environment');
     this.activeWorld.debug.setVisible(false);
     this.activeWorld.debug.setView(null);
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
     this.camera.position.set(...position);
     this.camera.lookAt(...target);
     this.camera.rotation.z = APP_CONFIG.camera.roll;
@@ -620,10 +617,9 @@ export class ThreeRuntime {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
     const view = this.activeWorld.environment.cameraViews.find(({ id }) => id === viewId);
     if (view === undefined) return null;
+    this.selectDevelopmentFrame('environment');
     this.activeWorld.debug.setVisible(false);
     this.activeWorld.debug.setView(null);
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
     this.camera.position.set(...view.position);
     this.camera.lookAt(...view.target);
     this.camera.rotation.z = APP_CONFIG.camera.roll;
@@ -645,8 +641,7 @@ export class ThreeRuntime {
 
   frameWorldDebugView(name: WorldDebugViewName): void {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return;
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
+    this.selectDevelopmentFrame(null);
     const { data, debug, navigation } = this.activeWorld;
     debug.setVisible(true);
     if (name === 'grid' || name === 'planting') {
@@ -889,11 +884,15 @@ export class ThreeRuntime {
 
   private resetDevelopmentFraming(world: WorldBuildResult): void {
     this.lastProbe = null;
-    this.activeEnvironmentFrame = null;
-    this.activeArchitectureFrame = null;
-    this.activeLandscapeFrame = null;
+    this.selectDevelopmentFrame(null);
     world.debug.setView(null);
     world.debug.setVisible(false);
+  }
+
+  private selectDevelopmentFrame(active: 'environment' | 'architecture' | 'landscape' | null): void {
+    if (active !== 'environment') this.activeEnvironmentFrame = null;
+    if (active !== 'architecture') this.activeArchitectureFrame = null;
+    if (active !== 'landscape') this.activeLandscapeFrame = null;
   }
 
   private rendererMetrics(): { readonly calls: number; readonly triangles: number } {
