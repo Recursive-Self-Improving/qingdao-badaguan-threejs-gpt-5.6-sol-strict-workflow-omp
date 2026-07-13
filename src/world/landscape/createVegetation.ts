@@ -1078,14 +1078,17 @@ function createSharedMaterials(
   ];
   const materials = new Map<VegetationMaterialId, MeshStandardMaterial>();
   for (const [materialId, name] of definitions) {
+    const isTrunk = materialId.includes('trunk');
     const material = new MeshStandardMaterial({
       color: new Color(0xffffff),
       transparent: false,
       opacity: 1,
       depthWrite: true,
       depthTest: true,
-      roughness: materialId.includes('trunk') ? 0.96 : 0.9,
+      roughness: isTrunk ? 0.96 : 0.9,
       metalness: 0,
+      emissive: isTrunk ? 0x000000 : 0x30382a,
+      emissiveIntensity: isTrunk ? 1 : 0.18,
     });
     material.name = name;
     materials.set(materialId, resources.register(material, group));
@@ -1212,7 +1215,7 @@ function createRenderBatches(
     mesh.name = `vegetation:instances:${ACTIVE_LOD_BAND_ID}:${definition.id}`;
     mesh.userData.collidable = false;
     mesh.castShadow = definition.geometryId === 'trunk';
-    mesh.receiveShadow = true;
+    mesh.receiveShadow = definition.geometryId === 'trunk';
     if (definition.dynamic) mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     for (let index = 0; index < definition.items.length; index += 1) {
       const item = definition.items[index];

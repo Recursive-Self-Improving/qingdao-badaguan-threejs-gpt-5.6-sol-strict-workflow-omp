@@ -34,8 +34,8 @@ export const APP_CONFIG = {
 } as const;
 
 export const ATMOSPHERE_CONFIG: AtmosphereConfig = Object.freeze({
-  sky: Object.freeze({ zenith: 0x7895a8, horizon: 0x7c867f, ground: 0x7c867f }),
-  fog: Object.freeze({ color: 0xb9c0bb, near: 72, far: 330 }),
+  sky: Object.freeze({ zenith: 0x7895a8, horizon: 0x7c867f, ground: 0x84908a }),
+  fog: Object.freeze({ color: 0xb9c0bb, near: 80, far: 380 }),
   hemisphere: Object.freeze({ skyColor: 0xb8cccf, groundColor: 0x6f6858, intensity: 1.42 }),
   sun: Object.freeze({
     color: 0xffddb0,
@@ -44,21 +44,31 @@ export const ATMOSPHERE_CONFIG: AtmosphereConfig = Object.freeze({
     target: Object.freeze([15, 0, -120] as const),
   }),
   quality: Object.freeze({
-    high: Object.freeze({ shadowMapSize: 2048, shadowCameraExtent: 160, shadowBias: 0.00022, shadowNormalBias: 0.052, exposure: 1.08, waterSegments: 8 }),
-    medium: Object.freeze({ shadowMapSize: 1024, shadowCameraExtent: 155, shadowBias: 0.00028, shadowNormalBias: 0.058, exposure: 1.06, waterSegments: 4 }),
-    low: Object.freeze({ shadowMapSize: 512, shadowCameraExtent: 150, shadowBias: 0.00034, shadowNormalBias: 0.064, exposure: 1.03, waterSegments: 1 }),
+    high: Object.freeze({ shadowMapSize: 2048, shadowCameraExtent: 165, shadowBias: 0, shadowNormalBias: 0.004, fogNearMultiplier: 1, fogFarMultiplier: 1, ambientMultiplier: 0.82, exposure: 1.04, waterSegments: 8 }),
+    medium: Object.freeze({ shadowMapSize: 1024, shadowCameraExtent: 160, shadowBias: 0, shadowNormalBias: 0.005, fogNearMultiplier: 1.125, fogFarMultiplier: 1.05, ambientMultiplier: 0.86, exposure: 1.05, waterSegments: 4 }),
+    low: Object.freeze({ shadowMapSize: 512, shadowCameraExtent: 155, shadowBias: 0, shadowNormalBias: 0.006, fogNearMultiplier: 1.35, fogFarMultiplier: 1.15, ambientMultiplier: 0.9, exposure: 1.08, waterSegments: 1 }),
   }),
   cameraViews: Object.freeze([
     Object.freeze({ id: 'spawn', position: Object.freeze([0, 4.35, 5] as const), target: Object.freeze([0, 4.1, -42] as const) }),
     Object.freeze({ id: 'deep-shade', position: Object.freeze([-140, 5.05, -177.5] as const), target: Object.freeze([-70, 4.9, -177.5] as const) }),
     Object.freeze({ id: 'uphill-vista', position: Object.freeze([0, 3.2, -80] as const), target: Object.freeze([0, 8.4, -245] as const) }),
     Object.freeze({ id: 'landmark', position: Object.freeze([0, 4.35, 35] as const), target: Object.freeze([36, 6.4, 25.5] as const) }),
-    Object.freeze({ id: 'shore', position: Object.freeze([0, 1.85, 37] as const), target: Object.freeze([0, 0.8, 140] as const) }),
+    Object.freeze({ id: 'shore', position: Object.freeze([-120, 6.5, 37] as const), target: Object.freeze([-45, 0.8, 55] as const) }),
   ]),
   coast: Object.freeze({
-    waterColor: 0x557f8e,
+    waterColor: 0x3f7188,
+    shallowWaterColor: 0x9a9b82,
+    midWaterColor: 0x678a97,
     beachColor: 0xb8a98d,
+    wetSandColor: 0xb39c72,
+    foamColor: 0xd4c9a8,
+    shoreBlendDistance: 12,
+    shoreFoamStart: 0.72,
+    shoreFoamEnd: 1.12,
     horizonColor: 0x7c867f,
+    horizonFadeStart: 4.5,
+    horizonFadeEnd: 220,
+    staticDetailStrength: 0.16,
     standardMotionAmplitude: 0.018,
     reducedMotionAmplitude: 0,
   }),

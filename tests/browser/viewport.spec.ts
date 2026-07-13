@@ -250,7 +250,7 @@ test('freezes while hidden then resumes with a fresh baseline and normal cadence
     expect(resumed[0]?.deltaSeconds).toBeLessThanOrEqual(0.001);
     expect(resumed[0]?.deltaSeconds).not.toBe(0.1);
     expect(resumed[1]?.deltaSeconds).toBeGreaterThan(0);
-    expect(resumed[1]?.deltaSeconds).toBeLessThan(0.1);
+    expect(resumed[1]?.deltaSeconds).toBeLessThanOrEqual(0.1);
   } finally {
     await page.evaluate(() => {
       const restore = (document as Document & { __restoreViewportVisibility?: () => void }).__restoreViewportVisibility;

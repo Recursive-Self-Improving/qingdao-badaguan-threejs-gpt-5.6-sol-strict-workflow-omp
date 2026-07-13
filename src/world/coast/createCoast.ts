@@ -9,7 +9,7 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D as TransformObject,
-  PlaneGeometry,
+  Uint32BufferAttribute,
   ShaderMaterial,
   Vector3,
 } from 'three';
@@ -31,8 +31,218 @@ const PROMENADE_SURFACE_OFFSET = 0.08;
 const SCREEN_THICKNESS = 0.7;
 const SCREEN_SECTION_LENGTH = 18;
 const WATER_LEVEL_OFFSET = 0.035;
-const BEACH_DEPTH = 3.4;
+const BEACH_DEPTH = 5.2;
 const HASH_OFFSET = 0x811c9dc5;
+const SHORELINE_SEGMENTS = 128;
+const SHORELINE_PRIMARY_AMPLITUDE = 2.6;
+const SHORELINE_SECONDARY_AMPLITUDE = 1;
+const WATER_HORIZON_WIDTH = 900;
+
+const BEACH_VERTEX_SHADER = `
+varying float vBeachProgress;
+varying float vBeachX;
+void main() {
+  vBeachProgress = uv.y;
+  vBeachX = position.x;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+const BEACH_FRAGMENT_SHADER = `
+uniform vec3 drySandColor;
+uniform vec3 wetSandColor;
+varying float vBeachProgress;
+varying float vBeachX;
+void main() {
+  float wetStart = 0.28 + 0.07 * sin(vBeachX * 0.021) + 0.035 * sin(vBeachX * 0.057 + 0.8);
+  float wetMix = smoothstep(wetStart, 1.0, vBeachProgress);
+  gl_FragColor = vec4(mix(drySandColor, wetSandColor, wetMix), 1.0);
+}
+`;
+const WATER_VERTEX_SHADER = `
+uniform float waterDepth;
+varying float vShoreDistance;
+varying float vViewDepth;
+varying float vWaterX;
+void main() {
+  vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+  vShoreDistance = (1.0 - uv.y) * waterDepth;
+  vViewDepth = -viewPosition.z;
+  vWaterX = position.x;
+  gl_Position = projectionMatrix * viewPosition;
+}
+`;
+const WATER_FRAGMENT_SHADER = `
+uniform vec3 horizonColor;
+uniform vec3 waterColor;
+uniform vec3 shallowWaterColor;
+uniform vec3 midWaterColor;
+uniform vec3 wetSandColor;
+uniform vec3 foamColor;
+uniform float horizonFadeStart;
+uniform float horizonFadeEnd;
+uniform float shoreBlendDistance;
+uniform float shoreFoamStart;
+uniform float shoreFoamEnd;
+uniform float staticDetailStrength;
+varying float vShoreDistance;
+varying float vViewDepth;
+varying float vWaterX;
+void main() {
+  float shoreWidth = shoreBlendDistance * (
+    1.0 + 0.12 * sin(vWaterX * 0.031) + 0.05 * sin(vWaterX * 0.083 + 1.2)
+  );
+  float shoreProgress = smoothstep(
+    0.0,
+    1.0,
+    clamp(vShoreDistance / shoreWidth, 0.0, 1.0)
+  );
+  float inverseShore = 1.0 - shoreProgress;
+  vec3 shoreColor = inverseShore * inverseShore * wetSandColor
+    + 2.0 * inverseShore * shoreProgress * shallowWaterColor
+    + shoreProgress * shoreProgress * waterColor;
+
+  float logStart = log(1.0 + horizonFadeStart);
+  float logRange = log(1.0 + horizonFadeEnd) - logStart;
+  float logDepth = log(1.0 + max(vViewDepth, 0.0));
+  float depthProgress = smoothstep(
+    0.0,
+    1.0,
+    clamp((logDepth - logStart) / logRange, 0.0, 1.0)
+  );
+  float inverseDepth = 1.0 - depthProgress;
+  vec3 viewDepthColor = inverseDepth * inverseDepth * waterColor
+    + 2.0 * inverseDepth * depthProgress * midWaterColor
+    + depthProgress * depthProgress * horizonColor;
+  vec3 depthColor = mix(shoreColor, viewDepthColor, shoreProgress);
+
+  float staticRipple = sin(vWaterX * 0.091 + vShoreDistance * 0.061)
+    * sin(vWaterX * 0.037 - vShoreDistance * 0.109 + 1.1);
+  float staticTonalDetail = staticRipple * staticDetailStrength * 0.04
+    * shoreProgress * (1.0 - depthProgress);
+  depthColor += vec3(staticTonalDetail);
+
+  float foamOffset = 0.14 * sin(vWaterX * 0.047) + 0.06 * sin(vWaterX * 0.113 + 0.9);
+  float foamStart = shoreFoamStart + foamOffset;
+  float foamEnd = shoreFoamEnd + foamOffset;
+  float foamIn = smoothstep(foamStart, foamStart + 0.08, vShoreDistance);
+  float foamOut = 1.0 - smoothstep(foamEnd - 0.08, foamEnd, vShoreDistance);
+  float foamPattern = 0.78 + 0.22 * (0.5 + 0.5
+    * sin(vWaterX * 0.19 + vShoreDistance * 0.7)
+    * sin(vWaterX * 0.043 - vShoreDistance * 0.31));
+  depthColor = mix(depthColor, foamColor, foamIn * foamOut * foamPattern * 0.36);
+  gl_FragColor = vec4(depthColor, 1.0);
+}
+`;
+
+function createIndexedSurfaceGeometry(
+  positions: Float32Array,
+  indices: readonly number[],
+  uvs: Float32Array | null = null,
+): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  const normals = new Float32Array(positions.length);
+  for (let index = 1; index < normals.length; index += 3) normals[index] = 1;
+  geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
+  if (uvs !== null) geometry.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(new Uint32BufferAttribute(indices, 1));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function createShoreline(minX: number, maxX: number, baseZ: number): Float32Array {
+  const columns = SHORELINE_SEGMENTS + 1;
+  const shoreline = new Float32Array(columns * 2);
+  for (let column = 0; column < columns; column += 1) {
+    const t = column / SHORELINE_SEGMENTS;
+    const x = minX + (maxX - minX) * t;
+    const offset = SHORELINE_PRIMARY_AMPLITUDE * Math.sin(x * 0.009)
+      + SHORELINE_SECONDARY_AMPLITUDE * Math.sin(x * 0.022 + 0.65);
+    shoreline[column * 2] = x;
+    shoreline[column * 2 + 1] = baseZ + offset;
+  }
+  return shoreline;
+}
+
+function createBeachGeometry(shoreline: Float32Array, landZ: number): BufferGeometry {
+  const columns = SHORELINE_SEGMENTS + 1;
+  const positions = new Float32Array(columns * 2 * 3);
+  const uvs = new Float32Array(columns * 2 * 2);
+  const indices: number[] = [];
+  for (let column = 0; column < columns; column += 1) {
+    const x = shoreline[column * 2] ?? 0;
+    const shoreZ = shoreline[column * 2 + 1] ?? landZ;
+    const landVertex = column;
+    const shoreVertex = columns + column;
+    const landOffset = landVertex * 3;
+    const shoreOffset = shoreVertex * 3;
+    const acrossT = column / SHORELINE_SEGMENTS;
+    positions[landOffset] = x;
+    positions[landOffset + 2] = landZ;
+    positions[shoreOffset] = x;
+    positions[shoreOffset + 2] = shoreZ;
+    uvs[landVertex * 2] = acrossT;
+    uvs[landVertex * 2 + 1] = 0;
+    uvs[shoreVertex * 2] = acrossT;
+    uvs[shoreVertex * 2 + 1] = 1;
+  }
+  for (let segment = 0; segment < SHORELINE_SEGMENTS; segment += 1) {
+    const landLeft = segment;
+    const landRight = segment + 1;
+    const shoreLeft = columns + segment;
+    const shoreRight = shoreLeft + 1;
+    indices.push(landLeft, shoreLeft, landRight, landRight, shoreLeft, shoreRight);
+  }
+  const geometry = createIndexedSurfaceGeometry(positions, indices, uvs);
+  geometry.userData.shorelineVertexStart = columns;
+  geometry.userData.shorelineVertexCount = columns;
+  geometry.userData.shorelineSegments = SHORELINE_SEGMENTS;
+  return geometry;
+}
+
+function createWaterGeometry(
+  shoreline: Float32Array,
+  waterEndZ: number,
+  depthSegments: 1 | 4 | 8,
+): BufferGeometry {
+  const columns = SHORELINE_SEGMENTS + 1;
+  const rows = depthSegments + 1;
+  const positions = new Float32Array(columns * rows * 3);
+  const uvs = new Float32Array(columns * rows * 2);
+  const indices: number[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    const depthT = row / depthSegments;
+    for (let column = 0; column < columns; column += 1) {
+      const acrossT = column / SHORELINE_SEGMENTS;
+      const shoreX = shoreline[column * 2] ?? 0;
+      const shoreZ = shoreline[column * 2 + 1] ?? waterEndZ;
+      const horizonX = -WATER_HORIZON_WIDTH * 0.5 + WATER_HORIZON_WIDTH * acrossT;
+      const vertex = row * columns + column;
+      const positionOffset = vertex * 3;
+      const uvOffset = vertex * 2;
+      positions[positionOffset] = shoreX + (horizonX - shoreX) * depthT;
+      positions[positionOffset + 2] = shoreZ + (waterEndZ - shoreZ) * depthT;
+      uvs[uvOffset] = acrossT;
+      uvs[uvOffset + 1] = 1 - depthT;
+    }
+  }
+  for (let row = 0; row < depthSegments; row += 1) {
+    for (let segment = 0; segment < SHORELINE_SEGMENTS; segment += 1) {
+      const nearLeft = row * columns + segment;
+      const nearRight = nearLeft + 1;
+      const farLeft = nearLeft + columns;
+      const farRight = farLeft + 1;
+      indices.push(nearLeft, farLeft, nearRight, nearRight, farLeft, farRight);
+    }
+  }
+  const geometry = createIndexedSurfaceGeometry(positions, indices, uvs);
+  geometry.userData.shorelineVertexStart = 0;
+  geometry.userData.shorelineVertexCount = columns;
+  geometry.userData.shorelineSegments = SHORELINE_SEGMENTS;
+  geometry.userData.depthSegments = depthSegments;
+  return geometry;
+}
 
 interface BoxInstance {
   readonly x: number;
@@ -126,6 +336,19 @@ export function createCoast(
   root.userData.horizonLayer = 'fogged-water-extension';
   const quality = config.quality[settings.density];
   const coast = config.coast;
+  if (!(coast.horizonFadeStart > 0 && coast.horizonFadeEnd > coast.horizonFadeStart)) {
+    throw new RangeError('Coast horizon fade must have a positive, ordered view-depth range.');
+  }
+  if (!(coast.shoreBlendDistance > 0)) {
+    throw new RangeError('Coast shore blend distance must be positive.');
+  }
+  if (!(coast.shoreFoamStart >= 0 && coast.shoreFoamEnd > coast.shoreFoamStart
+    && coast.shoreFoamEnd < coast.shoreBlendDistance)) {
+    throw new RangeError('Coast foam range must be ordered inside the shore blend distance.');
+  }
+  if (!(coast.staticDetailStrength >= 0 && coast.staticDetailStrength <= 0.25)) {
+    throw new RangeError('Coast static detail strength must be between zero and 0.25.');
+  }
 
   const promenadeGeometry = resources.register(createPromenadeGeometry(data), group);
   const promenadeMaterial = resources.register(new MeshStandardMaterial({ color: new Color(0xb6aa93), roughness: 0.94, metalness: 0 }), group);
@@ -136,32 +359,49 @@ export function createCoast(
 
   const sea = data.coast.seaBounds;
   const baseY = sampleGroundHeight(0, data.coast.edgeZ) + WATER_LEVEL_OFFSET;
-  const beachGeometry = resources.register(new PlaneGeometry(sea.maxX - sea.minX, BEACH_DEPTH), group);
-  const beachMaterial = resources.register(new MeshStandardMaterial({ color: coast.beachColor, roughness: 1, metalness: 0 }), group);
-  const beach = new Mesh(beachGeometry, beachMaterial);
-  beach.name = 'coast:restrained-beach';
-  beach.rotation.x = -Math.PI * 0.5;
-  beach.position.set((sea.minX + sea.maxX) * 0.5, baseY + 0.012, sea.minZ + BEACH_DEPTH * 0.5);
-  beach.receiveShadow = true;
-  root.add(beach);
   const waterStartZ = sea.minZ + BEACH_DEPTH;
   const waterEndZ = sea.maxZ + 800;
   const waterDepth = waterEndZ - waterStartZ;
-  const waterGeometry = resources.register(new PlaneGeometry(900, waterDepth, quality.waterSegments, quality.waterSegments), group);
+  const shoreline = createShoreline(sea.minX, sea.maxX, waterStartZ);
+  const beachGeometry = resources.register(createBeachGeometry(shoreline, sea.minZ), group);
   const channel = (color: number, shift: number): number => (color >> shift) & 0xff;
+  const beachMaterial = resources.register(new ShaderMaterial({
+    toneMapped: false,
+    uniforms: {
+      drySandColor: { value: new Vector3(channel(coast.beachColor, 16) / 255, channel(coast.beachColor, 8) / 255, channel(coast.beachColor, 0) / 255) },
+      wetSandColor: { value: new Vector3(channel(coast.wetSandColor, 16) / 255, channel(coast.wetSandColor, 8) / 255, channel(coast.wetSandColor, 0) / 255) },
+    },
+    vertexShader: BEACH_VERTEX_SHADER,
+    fragmentShader: BEACH_FRAGMENT_SHADER,
+  }), group);
+  const beach = new Mesh(beachGeometry, beachMaterial);
+  beach.name = 'coast:restrained-beach';
+  beach.position.y = baseY;
+  root.add(beach);
+  const waterGeometry = resources.register(createWaterGeometry(shoreline, waterEndZ, quality.waterSegments), group);
   const waterMaterial = resources.register(new ShaderMaterial({
     toneMapped: false,
     uniforms: {
       waterColor: { value: new Vector3(channel(coast.waterColor, 16) / 255, channel(coast.waterColor, 8) / 255, channel(coast.waterColor, 0) / 255) },
-      fogColor: { value: new Vector3(channel(coast.horizonColor, 16) / 255, channel(coast.horizonColor, 8) / 255, channel(coast.horizonColor, 0) / 255) },
+      shallowWaterColor: { value: new Vector3(channel(coast.shallowWaterColor, 16) / 255, channel(coast.shallowWaterColor, 8) / 255, channel(coast.shallowWaterColor, 0) / 255) },
+      midWaterColor: { value: new Vector3(channel(coast.midWaterColor, 16) / 255, channel(coast.midWaterColor, 8) / 255, channel(coast.midWaterColor, 0) / 255) },
+      wetSandColor: { value: new Vector3(channel(coast.wetSandColor, 16) / 255, channel(coast.wetSandColor, 8) / 255, channel(coast.wetSandColor, 0) / 255) },
+      foamColor: { value: new Vector3(channel(coast.foamColor, 16) / 255, channel(coast.foamColor, 8) / 255, channel(coast.foamColor, 0) / 255) },
+      horizonColor: { value: new Vector3(channel(coast.horizonColor, 16) / 255, channel(coast.horizonColor, 8) / 255, channel(coast.horizonColor, 0) / 255) },
+      horizonFadeStart: { value: coast.horizonFadeStart },
+      horizonFadeEnd: { value: coast.horizonFadeEnd },
+      shoreBlendDistance: { value: coast.shoreBlendDistance },
+      shoreFoamStart: { value: coast.shoreFoamStart },
+      shoreFoamEnd: { value: coast.shoreFoamEnd },
+      waterDepth: { value: waterDepth },
+      staticDetailStrength: { value: coast.staticDetailStrength },
     },
-    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-    fragmentShader: 'varying vec2 vUv; uniform vec3 waterColor; uniform vec3 fogColor; void main(){ float fogMix=smoothstep(0.035,0.24,vUv.y); gl_FragColor=vec4(mix(waterColor,fogColor,fogMix),1.0); }',
+    vertexShader: WATER_VERTEX_SHADER,
+    fragmentShader: WATER_FRAGMENT_SHADER,
   }), group);
   const water = new Mesh(waterGeometry, waterMaterial);
   water.name = 'coast:water';
-  water.rotation.x = -Math.PI * 0.5;
-  water.position.set((sea.minX + sea.maxX) * 0.5, baseY, (waterStartZ + waterEndZ) * 0.5);
+  water.position.y = baseY;
   root.add(water);
 
 
@@ -203,7 +443,13 @@ export function createCoast(
         motion: settings.motion,
         waterMotionAmplitude: amplitude,
         waterTransformChecksum: checksum(water.rotation.z + water.position.y),
+        waterStaticDetailStrength: coast.staticDetailStrength,
         waterSegments: quality.waterSegments,
+        horizonFadeStart: coast.horizonFadeStart,
+        horizonFadeEnd: coast.horizonFadeEnd,
+        shoreBlendDistance: coast.shoreBlendDistance,
+        shoreFoamStart: coast.shoreFoamStart,
+        shoreFoamEnd: coast.shoreFoamEnd,
         beachLayers: 1,
         horizonLayers: 1,
         openingCount: data.coast.screen.openings.length,

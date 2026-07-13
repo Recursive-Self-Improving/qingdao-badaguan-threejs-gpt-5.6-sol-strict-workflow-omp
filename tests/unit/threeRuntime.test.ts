@@ -154,7 +154,7 @@ function worldBuild(settings: LandscapeSettings = Object.freeze({ density: 'high
     environment: {
       root: new Group(),
       config: {} as never,
-      metrics: Object.freeze({ quality: settings.density, motion: settings.motion, sunDirection: Object.freeze([1, -1, 0] as const), fogNear: 105, fogFar: 430, exposure: 1.08, shadowMapSize: 2048, shadowBias: -0.00016, shadowNormalBias: 0.028, contactGrounding: true }),
+      metrics: Object.freeze({ quality: settings.density, motion: settings.motion, sunDirection: Object.freeze([1, -1, 0] as const), fogNear: 105, fogFar: 430, exposure: 1.08, ambientIntensity: 1.2, skyGradientRows: 256, shadowMapSize: 2048, shadowBias: -0.00016, shadowNormalBias: 0.028, contactGrounding: true }),
       cameraViews: Object.freeze([{ id: 'spawn' as const, position: Object.freeze([0, 4, 5] as const), target: Object.freeze([0, 4, -40] as const) }]),
       backgroundColor: 0xd8c7aa,
       fogColor: 0xb9c0bb,
@@ -168,7 +168,7 @@ function worldBuild(settings: LandscapeSettings = Object.freeze({ density: 'high
     coast: {
       root: new Group(),
       config: {} as never,
-      metrics: Object.freeze({ quality: settings.density, motion: settings.motion, waterMotionAmplitude: settings.motion === 'reduced' ? 0 : 0.018, waterTransformChecksum: 1, waterSegments: 8, beachLayers: 1, horizonLayers: 1, openingCount: 3, clearanceIntersections: 0, collidable: false }),
+      metrics: Object.freeze({ quality: settings.density, motion: settings.motion, waterMotionAmplitude: settings.motion === 'reduced' ? 0 : 0.018, waterTransformChecksum: 1, waterStaticDetailStrength: 0.16, waterSegments: 8, horizonFadeStart: 4.5, horizonFadeEnd: 220, shoreBlendDistance: 12, shoreFoamStart: 0.72, shoreFoamEnd: 1.12, beachLayers: 1, horizonLayers: 1, openingCount: 3, clearanceIntersections: 0, collidable: false }),
       update: vi.fn(),
       reset: vi.fn(),
       setCaptureTime: vi.fn(),
@@ -811,13 +811,14 @@ describe('ThreeRuntime lifecycle safety', () => {
     runtime.dispose();
   });
 
-  it('suppresses landscape updates while hidden and resets capture state without resetting the clock', () => {
+  it('force-publishes the first resumed animation sample then restores the metrics throttle', () => {
     const renderer = createRenderer();
     const viewport = createViewport();
     const world = worldBuild();
     const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => world));
     const callback = renderer.setAnimationLoop.mock.calls[0]?.[0];
-    callback?.(1_000);
+    const initialTimestamp = performance.now() + 1;
+    callback?.(initialTimestamp);
     const elapsedBeforeReset = runtime.metrics.frame.elapsedSeconds;
 
     runtime.setLandscapeCaptureTime(7);
@@ -827,8 +828,34 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(runtime.metrics.frame.elapsedSeconds).toBe(elapsedBeforeReset);
 
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
-    callback?.(2_000);
+    document.dispatchEvent(new Event('visibilitychange'));
+    callback?.(initialTimestamp + 10);
     expect(world.landscape.update).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const visibilityPublish = JSON.parse(canvas.dataset.threeRuntimeMetrics ?? '{}') as {
+      frame: { deltaSeconds: number; frameCount: number; visible: boolean };
+    };
+    expect(visibilityPublish.frame).toMatchObject({ frameCount: 1, visible: true });
+
+    callback?.(initialTimestamp + 16);
+    const resumedPublish = JSON.parse(canvas.dataset.threeRuntimeMetrics ?? '{}') as {
+      frame: { deltaSeconds: number; frameCount: number };
+    };
+    expect(resumedPublish.frame).toMatchObject({ deltaSeconds: 0, frameCount: 2 });
+
+    callback?.(initialTimestamp + 32);
+    expect(runtime.metrics.frame.frameCount).toBe(3);
+    expect(canvas.dataset.threeRuntimeMetrics).toBe(JSON.stringify(resumedPublish));
+
+    callback?.(initialTimestamp + 117);
+    const throttledPublish = JSON.parse(canvas.dataset.threeRuntimeMetrics ?? '{}') as {
+      frame: { deltaSeconds: number; frameCount: number };
+    };
+    expect(throttledPublish.frame.frameCount).toBe(4);
+    expect(throttledPublish.frame.deltaSeconds).toBeGreaterThan(0);
+
     runtime.dispose();
     expect(world.landscape.reset).toHaveBeenCalledTimes(2);
   });

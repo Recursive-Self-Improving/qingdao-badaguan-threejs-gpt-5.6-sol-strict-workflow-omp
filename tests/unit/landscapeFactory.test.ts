@@ -682,6 +682,20 @@ describe('landscape factory', () => {
     });
     expect(shadowCasters.length).toBeGreaterThan(0);
     expect(shadowCasters.every(({ name }) => name.includes(':trunks'))).toBe(true);
+    const vegetationMeshes = instancedMeshes(landscape.root)
+      .filter(({ name }) => name.startsWith('vegetation:instances:'));
+    const canopyMeshes = vegetationMeshes.filter(({ name }) => name.includes(':canopies:') || name.endsWith(':accents'));
+    const trunkMeshes = vegetationMeshes.filter(({ name }) => name.includes(':trunks'));
+    expect(canopyMeshes.length).toBeGreaterThan(0);
+    expect(canopyMeshes.every(({ receiveShadow }) => !receiveShadow)).toBe(true);
+    expect(trunkMeshes.length).toBeGreaterThan(0);
+    expect(trunkMeshes.every(({ receiveShadow }) => receiveShadow)).toBe(true);
+    const canopyMaterials = liveMaterials.filter((material): material is MeshStandardMaterial =>
+      material instanceof MeshStandardMaterial
+      && (material.name === 'vegetation:foliage-palette' || material.name === 'vegetation:accent-palette'));
+    expect(canopyMaterials.length).toBe(2);
+    expect(canopyMaterials.every((material) => material.emissive.getHex() === 0x30382a)).toBe(true);
+    expect(canopyMaterials.every(({ emissiveIntensity }) => emissiveIntensity === 0.18)).toBe(true);
 
     for (const detail of [
       'stone-bench',

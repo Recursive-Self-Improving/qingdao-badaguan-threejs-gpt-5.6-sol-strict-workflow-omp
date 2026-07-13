@@ -469,15 +469,29 @@ export interface EnvironmentQualityConfig {
   readonly shadowCameraExtent: number;
   readonly shadowBias: number;
   readonly shadowNormalBias: number;
+  readonly fogNearMultiplier: number;
+  readonly fogFarMultiplier: number;
+  readonly ambientMultiplier: number;
   readonly exposure: number;
   readonly waterSegments: 1 | 4 | 8;
 }
 
 export interface CoastConfig {
   readonly waterColor: number;
+  readonly shallowWaterColor: number;
+  readonly midWaterColor: number;
   readonly beachColor: number;
-  /** Calibrated to the sky horizon by default, but separate because the water shader is not color-managed like the sky texture. */
+  readonly wetSandColor: number;
+  readonly foamColor: number;
+  readonly shoreBlendDistance: number;
+  readonly shoreFoamStart: number;
+  readonly shoreFoamEnd: number;
+  /** Matches the sky horizon at full fade so the water converges without a hard seam. */
   readonly horizonColor: number;
+  readonly horizonFadeStart: number;
+  readonly horizonFadeEnd: number;
+  /** Deterministic world-space depth retention and tonal ripple, independent of motion/time. */
+  readonly staticDetailStrength: number;
   readonly standardMotionAmplitude: number;
   readonly reducedMotionAmplitude: number;
 }
@@ -504,6 +518,8 @@ export interface EnvironmentMetrics {
   readonly fogNear: number;
   readonly fogFar: number;
   readonly exposure: number;
+  readonly ambientIntensity: number;
+  readonly skyGradientRows: number;
   readonly shadowMapSize: number;
   readonly shadowBias: number;
   readonly shadowNormalBias: number;
@@ -531,7 +547,13 @@ export interface CoastMetrics {
   readonly motion: LandscapeMotion;
   readonly waterMotionAmplitude: number;
   readonly waterTransformChecksum: number;
+  readonly waterStaticDetailStrength: number;
   readonly waterSegments: number;
+  readonly horizonFadeStart: number;
+  readonly horizonFadeEnd: number;
+  readonly shoreBlendDistance: number;
+  readonly shoreFoamStart: number;
+  readonly shoreFoamEnd: number;
   readonly beachLayers: number;
   readonly horizonLayers: number;
   readonly openingCount: number;

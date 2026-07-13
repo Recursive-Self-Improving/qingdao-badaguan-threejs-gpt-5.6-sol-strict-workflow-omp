@@ -6,16 +6,17 @@ import {
   Group,
   InstancedMesh,
   Mesh,
-  MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D as TransformObject,
   type Material,
+  type MeshLambertMaterial,
   type Object3D,
 } from 'three';
 
 import { sampleGroundHeight } from '../../exploration/navigation';
 import type { ResourceRegistry } from '../../render/ResourceRegistry';
 import { DISTRICT_DATA, ROAD_SPECS } from '../districtData';
+import { createGroundSurfaceMaterial, GROUND_SURFACE_COLOR } from '../terrain/createTerrain';
 import type {
   Bounds2,
   GateSpec,
@@ -50,7 +51,7 @@ const GATE_POST_SIZE = 0.48;
 const GATE_ALIGNMENT_TOLERANCE = 0.75;
 const COLORS = {
   road: 0x555c5b,
-  sidewalk: 0xb7b09b,
+  sidewalk: GROUND_SURFACE_COLOR,
   parcelLawn: 0x738363,
   publicGreen: 0x4f7451,
   publicPath: 0xd3c5a5,
@@ -503,6 +504,7 @@ function createSurfaceMesh(
   name: string,
   positions: readonly number[],
   color: number,
+  materialOverride: Material | null = null,
 ): Mesh {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
@@ -511,12 +513,11 @@ function createSurfaceMesh(
   geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   geometry.computeBoundingSphere();
   resources.register(geometry, group);
-  const material = resources.register(name === 'street:sidewalks'
-    ? new MeshBasicMaterial({ color: new Color(color), fog: false })
-    : new MeshStandardMaterial({ color: new Color(color), roughness: 0.94, metalness: 0 }), group);
+  const material = materialOverride
+    ?? resources.register(new MeshStandardMaterial({ color: new Color(color), roughness: 0.94, metalness: 0 }), group);
   const mesh = new Mesh(geometry, material);
   mesh.name = name;
-  mesh.receiveShadow = name !== 'street:sidewalks';
+  mesh.receiveShadow = true;
   return mesh;
 }
 
@@ -693,7 +694,11 @@ function createInstancedBoxes(
 }
 
 /** Builds the terrain-conforming, data-driven C04 street and garden skeleton. */
-export function createStreetNetwork(resources: ResourceRegistry, group: string): Object3D {
+export function createStreetNetwork(
+  resources: ResourceRegistry,
+  group: string,
+  groundMaterial: MeshLambertMaterial = createGroundSurfaceMaterial(resources, group),
+): Object3D {
   const root = new Group();
   root.name = 'street-network';
 
@@ -709,7 +714,7 @@ export function createStreetNetwork(resources: ResourceRegistry, group: string):
   intersections.userData.intersectionCount = intersectionCount;
   root.add(
     createSurfaceMesh(resources, group, 'street:roads', roadPositions, COLORS.road),
-    createSurfaceMesh(resources, group, 'street:sidewalks', sidewalkPositions, COLORS.sidewalk),
+    createSurfaceMesh(resources, group, 'street:sidewalks', sidewalkPositions, COLORS.sidewalk, groundMaterial),
     intersections,
   );
 

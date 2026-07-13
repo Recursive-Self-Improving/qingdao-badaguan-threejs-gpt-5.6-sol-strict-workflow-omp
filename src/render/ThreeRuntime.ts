@@ -254,7 +254,11 @@ export class ThreeRuntime {
   private readonly resources: ResourceRegistry;
   private readonly viewport: RuntimeViewport;
   private readonly onVisibilityChange = (): void => {
+    const wasRunning = this.loopRunning;
     this.syncAnimationLoop();
+    if (import.meta.env.DEV && !wasRunning && this.loopRunning) {
+      this.forceDevelopmentMetricsOnNextAnimationTick = true;
+    }
     this.publishDevelopmentMetrics();
   };
   private readonly animate = (timestampMs: number): void => {
@@ -269,13 +273,16 @@ export class ThreeRuntime {
     this.options.onRender?.(this);
     this.renderer.render(this.scene, this.camera);
     this.renderCount += 1;
-    this.publishDevelopmentMetrics(false, timestampMs);
+    const forceDevelopmentMetrics = this.forceDevelopmentMetricsOnNextAnimationTick;
+    this.forceDevelopmentMetricsOnNextAnimationTick = false;
+    this.publishDevelopmentMetrics(forceDevelopmentMetrics, timestampMs);
   };
 
   private frameCount = 0;
   private renderCount = 0;
   private rebuildCount = 0;
   private lastDevelopmentMetricsPublishMs = Number.NEGATIVE_INFINITY;
+  private forceDevelopmentMetricsOnNextAnimationTick = false;
   private sceneGeneration = 0;
   private activeResourceGroup: string | null = null;
   private landscapeSettings: LandscapeSettings = DEFAULT_LANDSCAPE_SETTINGS;

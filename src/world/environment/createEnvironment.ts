@@ -18,10 +18,18 @@ import type {
   LandscapeUpdateFrame,
 } from '../types';
 
+const SKY_GRADIENT_ROWS = 256;
 
 function validateConfig(config: AtmosphereConfig): void {
   if (!(config.fog.near > 0 && config.fog.far > config.fog.near)) {
     throw new RangeError('Environment fog must have a positive, ordered depth range.');
+  }
+  for (const quality of Object.values(config.quality)) {
+    const fogNear = config.fog.near * quality.fogNearMultiplier;
+    const fogFar = config.fog.far * quality.fogFarMultiplier;
+    if (!(quality.ambientMultiplier > 0 && fogNear > 0 && fogFar > fogNear)) {
+      throw new RangeError('Environment quality must define positive ambient fill and an ordered fog range.');
+    }
   }
   if (config.cameraViews.length !== 5 || new Set(config.cameraViews.map(({ id }) => id)).size !== 5) {
     throw new RangeError('Environment must define five unique verification views.');
@@ -37,21 +45,26 @@ export function createEnvironment(
 ): EnvironmentController {
   validateConfig(config);
   const quality = config.quality[settings.density];
+  const fogNear = config.fog.near * quality.fogNearMultiplier;
+  const fogFar = config.fog.far * quality.fogFarMultiplier;
+  const ambientIntensity = config.hemisphere.intensity * quality.ambientMultiplier;
   const root = new Group();
   root.name = 'environment:early-autumn-morning';
 
-  const skyPixels = new Uint8Array(64 * 4);
+  const skyPixels = new Uint8Array(SKY_GRADIENT_ROWS * 4);
   const channel = (color: number, shift: number): number => (color >> shift) & 0xff;
-  for (let row = 0; row < 64; row += 1) {
-    const t = Math.max(0, (row - 40) / 23);
-    const eased = t * t * (3 - 2 * t);
+  for (let row = 0; row < SKY_GRADIENT_ROWS; row += 1) {
+    const t = row / (SKY_GRADIENT_ROWS - 1);
+    const fromColor = t < 0.25 ? config.sky.horizon : t < 0.5 ? config.sky.ground : config.sky.horizon;
+    const toColor = t < 0.25 ? config.sky.ground : t < 0.5 ? config.sky.horizon : config.sky.zenith;
+    const blend = t < 0.25 ? t * 4 : t < 0.5 ? (t - 0.25) * 4 : (t - 0.5) * 2;
     const offset = row * 4;
-    skyPixels[offset] = Math.round(channel(config.sky.horizon, 16) * (1 - eased) + channel(config.sky.zenith, 16) * eased);
-    skyPixels[offset + 1] = Math.round(channel(config.sky.horizon, 8) * (1 - eased) + channel(config.sky.zenith, 8) * eased);
-    skyPixels[offset + 2] = Math.round(channel(config.sky.horizon, 0) * (1 - eased) + channel(config.sky.zenith, 0) * eased);
+    skyPixels[offset] = Math.round(channel(fromColor, 16) * (1 - blend) + channel(toColor, 16) * blend);
+    skyPixels[offset + 1] = Math.round(channel(fromColor, 8) * (1 - blend) + channel(toColor, 8) * blend);
+    skyPixels[offset + 2] = Math.round(channel(fromColor, 0) * (1 - blend) + channel(toColor, 0) * blend);
     skyPixels[offset + 3] = 255;
   }
-  const backgroundTexture = resources.register(new DataTexture(skyPixels, 1, 64, RGBAFormat, UnsignedByteType), group);
+  const backgroundTexture = resources.register(new DataTexture(skyPixels, 1, SKY_GRADIENT_ROWS, RGBAFormat, UnsignedByteType), group);
   backgroundTexture.name = 'environment:sky-gradient';
   backgroundTexture.colorSpace = SRGBColorSpace;
   backgroundTexture.magFilter = LinearFilter;
@@ -61,7 +74,7 @@ export function createEnvironment(
   const hemisphere = new HemisphereLight(
     config.hemisphere.skyColor,
     config.hemisphere.groundColor,
-    config.hemisphere.intensity,
+    ambientIntensity,
   );
   hemisphere.name = 'environment:hemisphere-fill';
   root.add(hemisphere);
@@ -94,9 +107,11 @@ export function createEnvironment(
     quality: settings.density,
     motion: settings.motion,
     sunDirection: Object.freeze([deltaX / length, deltaY / length, deltaZ / length] as const),
-    fogNear: config.fog.near,
-    fogFar: config.fog.far,
+    fogNear,
+    fogFar,
     exposure: quality.exposure,
+    ambientIntensity,
+    skyGradientRows: SKY_GRADIENT_ROWS,
     shadowMapSize: quality.shadowMapSize,
     shadowBias: quality.shadowBias,
     shadowNormalBias: quality.shadowNormalBias,
@@ -111,8 +126,8 @@ export function createEnvironment(
     cameraViews: config.cameraViews,
     backgroundColor: config.sky.horizon,
     fogColor: config.fog.color,
-    fogNear: config.fog.near,
-    fogFar: config.fog.far,
+    fogNear,
+    fogFar,
     update(_frame: LandscapeUpdateFrame): void {},
     reset(): void {},
     setCaptureTime(time: number | null): void {

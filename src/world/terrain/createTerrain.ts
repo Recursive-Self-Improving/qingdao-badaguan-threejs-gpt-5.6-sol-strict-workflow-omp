@@ -4,7 +4,7 @@ import {
   Float32BufferAttribute,
   Group,
   Mesh,
-  MeshBasicMaterial,
+  MeshLambertMaterial,
   Uint32BufferAttribute,
   type Object3D,
 } from 'three';
@@ -18,8 +18,28 @@ export { sampleGroundHeight };
 const TERRAIN_COLUMNS = 85;
 const TERRAIN_ROWS = 73;
 
+export const GROUND_SURFACE_COLOR = 0xb7b09b;
+
+export function createGroundSurfaceMaterial(
+  resources: ResourceRegistry,
+  group: string,
+): MeshLambertMaterial {
+  const material = new MeshLambertMaterial({
+    color: new Color(GROUND_SURFACE_COLOR),
+    emissive: GROUND_SURFACE_COLOR,
+    emissiveIntensity: 0.035,
+    fog: true,
+  });
+  material.name = 'world:matched-ground-surface';
+  return resources.register(material, group);
+}
+
 /** Builds the complete district ground surface from the same sampler used by navigation. */
-export function createTerrain(resources: ResourceRegistry, group: string): Object3D {
+export function createTerrain(
+  resources: ResourceRegistry,
+  group: string,
+  groundMaterial: MeshLambertMaterial = createGroundSurfaceMaterial(resources, group),
+): Object3D {
   const { worldBounds } = DISTRICT_DATA;
   const positions = new Float32Array(TERRAIN_COLUMNS * TERRAIN_ROWS * 3);
   const indices: number[] = [];
@@ -60,12 +80,8 @@ export function createTerrain(resources: ResourceRegistry, group: string): Objec
   geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   resources.register(geometry, group);
 
-  const material = resources.register(new MeshBasicMaterial({
-    color: new Color(0xb7b09b),
-    fog: false,
-  }), group);
-  const terrain = new Mesh(geometry, material);
-  terrain.receiveShadow = false;
+  const terrain = new Mesh(geometry, groundMaterial);
+  terrain.receiveShadow = true;
   terrain.name = 'district-terrain';
 
   const root = new Group();

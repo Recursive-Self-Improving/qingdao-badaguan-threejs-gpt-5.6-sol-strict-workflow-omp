@@ -190,5 +190,5 @@ export const C07_ENVIRONMENT_VIEWS = Object.freeze([
   Object.freeze({ id: 'deep-shade', position: Object.freeze([-140, 5.05, -177.5] as const), target: Object.freeze([-70, 4.9, -177.5] as const) }),
   Object.freeze({ id: 'uphill-vista', position: Object.freeze([0, 3.2, -80] as const), target: Object.freeze([0, 8.4, -245] as const) }),
   Object.freeze({ id: 'landmark', position: Object.freeze([0, 4.35, 35] as const), target: Object.freeze([36, 6.4, 25.5] as const) }),
-  Object.freeze({ id: 'shore', position: Object.freeze([0, 1.85, 37] as const), target: Object.freeze([0, 0.8, 140] as const) }),
+  Object.freeze({ id: 'shore', position: Object.freeze([-120, 6.5, 37] as const), target: Object.freeze([-45, 0.8, 55] as const) }),
 ] as const);

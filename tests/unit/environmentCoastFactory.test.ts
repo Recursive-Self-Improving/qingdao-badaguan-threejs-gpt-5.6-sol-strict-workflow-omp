@@ -1,4 +1,4 @@
-import { DirectionalLight, HemisphereLight, InstancedMesh, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from 'three';
+import { BufferGeometry, DataTexture, DirectionalLight, HemisphereLight, InstancedMesh, Mesh, MeshLambertMaterial, ShaderMaterial, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 
 import { APP_CONFIG, ATMOSPHERE_CONFIG } from '../../src/app/config';
@@ -7,6 +7,7 @@ import { createCoast } from '../../src/world/coast/createCoast';
 import { DISTRICT_DATA } from '../../src/world/districtData';
 import { createEnvironment } from '../../src/world/environment/createEnvironment';
 import { createStreetNetwork } from '../../src/world/streets/createStreetNetwork';
+import { createGroundSurfaceMaterial, createTerrain, GROUND_SURFACE_COLOR } from '../../src/world/terrain/createTerrain';
 import type { AtmosphereConfig } from '../../src/world/types';
 
 const HIGH_STANDARD = Object.freeze({ density: 'high' as const, motion: 'standard' as const });
@@ -23,6 +24,16 @@ const INJECTED_ATMOSPHERE: AtmosphereConfig = Object.freeze({
   coast: Object.freeze({
     ...ATMOSPHERE_CONFIG.coast,
     horizonColor: 0xe12a8f,
+    shallowWaterColor: 0x234567,
+    midWaterColor: 0x345678,
+    wetSandColor: 0xabcdef,
+    foamColor: 0x123abc,
+    shoreBlendDistance: 9.5,
+    shoreFoamStart: 0.8,
+    shoreFoamEnd: 2.2,
+    horizonFadeStart: 65,
+    horizonFadeEnd: 410,
+    staticDetailStrength: 0.19,
     standardMotionAmplitude: 0.111,
     reducedMotionAmplitude: 0.027,
   }),
@@ -41,17 +52,26 @@ describe('C07 environment and coast factories', () => {
     ]);
     expect(ATMOSPHERE_CONFIG.fog.color).toBe(0xb9c0bb);
     expect(ATMOSPHERE_CONFIG.sky.horizon).toBe(0x7c867f);
-    expect(ATMOSPHERE_CONFIG.coast.horizonColor).toBe(0x7c867f);
+    expect(ATMOSPHERE_CONFIG.coast.horizonColor).toBe(ATMOSPHERE_CONFIG.sky.horizon);
+    expect(ATMOSPHERE_CONFIG.coast.horizonFadeStart).toBeGreaterThan(0);
+    expect(ATMOSPHERE_CONFIG.coast.horizonFadeEnd).toBeLessThan(APP_CONFIG.camera.far);
+    expect(ATMOSPHERE_CONFIG.coast.shoreBlendDistance).toBeGreaterThan(0);
     expect(ATMOSPHERE_CONFIG.fog.near).toBeGreaterThan(60);
     expect(ATMOSPHERE_CONFIG.quality.high.shadowMapSize).toBeGreaterThan(ATMOSPHERE_CONFIG.quality.medium.shadowMapSize);
     expect(ATMOSPHERE_CONFIG.quality.medium.shadowMapSize).toBeGreaterThan(ATMOSPHERE_CONFIG.quality.low.shadowMapSize);
     for (const quality of Object.values(ATMOSPHERE_CONFIG.quality)) {
       expect(quality.exposure).toBeGreaterThanOrEqual(1);
       expect(quality.exposure).toBeLessThanOrEqual(1.1);
+      expect(quality.fogNearMultiplier).toBeGreaterThan(0);
+      expect(quality.fogFarMultiplier).toBeGreaterThan(0);
+      expect(quality.ambientMultiplier).toBeGreaterThan(0);
+      expect(quality.shadowBias).toBeLessThanOrEqual(0);
       expect(Math.abs(quality.shadowBias)).toBeLessThan(0.001);
       expect(quality.shadowNormalBias).toBeGreaterThan(0);
-      expect(quality.shadowNormalBias).toBeLessThan(0.07);
+      expect(quality.shadowNormalBias).toBeLessThan(0.03);
     }
+    expect(ATMOSPHERE_CONFIG.fog.far * ATMOSPHERE_CONFIG.quality.low.fogFarMultiplier)
+      .toBeGreaterThan(ATMOSPHERE_CONFIG.fog.far * ATMOSPHERE_CONFIG.quality.high.fogFarMultiplier);
   });
 
   it('creates soft sun and fill lights with quality-aware shadow calibration and no leaked resources', () => {
@@ -64,8 +84,36 @@ describe('C07 environment and coast factories', () => {
     expect(fill).toBeInstanceOf(HemisphereLight);
     expect((sun as DirectionalLight).castShadow).toBe(true);
     expect((sun as DirectionalLight).shadow.mapSize.toArray()).toEqual([2048, 2048]);
-    expect(high.metrics).toMatchObject({ quality: 'high', motion: 'standard', shadowMapSize: 2048, contactGrounding: true });
-    expect(low.metrics).toMatchObject({ quality: 'low', motion: 'reduced', shadowMapSize: 512, contactGrounding: true });
+    expect((sun as DirectionalLight).shadow.bias).toBe(ATMOSPHERE_CONFIG.quality.high.shadowBias);
+    expect((sun as DirectionalLight).shadow.normalBias).toBe(ATMOSPHERE_CONFIG.quality.high.shadowNormalBias);
+    expect((fill as HemisphereLight).intensity).toBeCloseTo(1.42 * ATMOSPHERE_CONFIG.quality.high.ambientMultiplier);
+    const sky = high.backgroundTexture as DataTexture;
+    const skyData = sky.image.data as Uint8Array;
+    expect(high.metrics.skyGradientRows).toBe(256);
+    expect(sky.image).toMatchObject({ width: 1, height: 256 });
+    expect(Array.from(skyData.slice(0, 3))).toEqual([0x7c, 0x86, 0x7f]);
+    expect(Array.from(skyData.slice(127 * 4, 127 * 4 + 3))).toEqual([0x7c, 0x86, 0x7f]);
+    expect(Array.from(skyData.slice(128 * 4, 128 * 4 + 3))).toEqual([0x7c, 0x86, 0x7f]);
+    expect(Array.from(skyData.slice((256 - 1) * 4, (256 - 1) * 4 + 3))).toEqual([0x78, 0x95, 0xa8]);
+    let longestIdenticalRun = 1;
+    let identicalRun = 1;
+    for (let row = 1; row < 256; row += 1) {
+      const offset = row * 4;
+      const previous = offset - 4;
+      if (skyData[offset] === skyData[previous]
+        && skyData[offset + 1] === skyData[previous + 1]
+        && skyData[offset + 2] === skyData[previous + 2]) {
+        identicalRun += 1;
+        longestIdenticalRun = Math.max(longestIdenticalRun, identicalRun);
+      } else {
+        identicalRun = 1;
+      }
+    }
+    expect(longestIdenticalRun).toBeLessThan(16);
+    expect(high.metrics).toMatchObject({ quality: 'high', motion: 'standard', fogNear: 80, fogFar: 380, shadowMapSize: 2048, contactGrounding: true });
+    expect(low.metrics).toMatchObject({ quality: 'low', motion: 'reduced', fogNear: 108, shadowMapSize: 512, contactGrounding: true });
+    expect(low.metrics.fogFar).toBeCloseTo(437);
+    expect(low.metrics.ambientIntensity).toBeGreaterThan(high.metrics.ambientIntensity);
     expect(high.metrics.sunDirection[1]).toBeLessThan(0);
     expect(resources.getCounts().resources).toBeGreaterThan(0);
     resources.disposeGroup('environment-high');
@@ -73,10 +121,22 @@ describe('C07 environment and coast factories', () => {
     expect(resources.getCounts()).toMatchObject({ resources: 0, references: 0, groups: 0 });
   });
 
-  it('owns promenade, beach, fogged water horizon, and screen exactly once outside streets', () => {
+  it('shares one fogged lit ground material across shadow-receiving terrain and sidewalks', () => {
     const resources = new ResourceRegistry();
-    const streets = createStreetNetwork(resources, 'streets');
+    const groundMaterial = createGroundSurfaceMaterial(resources, 'streets');
+    const terrain = createTerrain(resources, 'streets', groundMaterial);
+    const streets = createStreetNetwork(resources, 'streets', groundMaterial);
     const coast = createCoast(resources, 'coast', HIGH_STANDARD, DISTRICT_DATA, ATMOSPHERE_CONFIG);
+    const terrainSurface = terrain.getObjectByName('district-terrain') as Mesh;
+    const sidewalks = streets.getObjectByName('street:sidewalks') as Mesh;
+    expect(groundMaterial).toBeInstanceOf(MeshLambertMaterial);
+    expect(groundMaterial.fog).toBe(true);
+    expect(groundMaterial.emissive.getHex()).toBe(GROUND_SURFACE_COLOR);
+    expect(groundMaterial.emissiveIntensity).toBe(0.035);
+    expect(terrainSurface.material).toBe(groundMaterial);
+    expect(sidewalks.material).toBe(groundMaterial);
+    expect(terrainSurface.receiveShadow).toBe(true);
+    expect(sidewalks.receiveShadow).toBe(true);
     expect(streets.getObjectByName('street:coastal-promenade')).toBeUndefined();
     expect(streets.getObjectByName('street:noncollidable-sea')).toBeUndefined();
     expect(streets.getObjectByName('street:coastal-view-screen')).toBeUndefined();
@@ -86,16 +146,70 @@ describe('C07 environment and coast factories', () => {
       DISTRICT_DATA.roads.filter(({ orientation }) => orientation === 'east-west').length
         * DISTRICT_DATA.roads.filter(({ orientation }) => orientation === 'north-south').length,
     );
-    expect((streets.getObjectByName('street:sidewalks') as Mesh).receiveShadow).toBe(false);
     expect((streets.getObjectByName('street:roads') as Mesh).receiveShadow).toBe(true);
-    expect(coast.root.getObjectByName('coast:promenade')).toBeInstanceOf(Mesh);
-    expect(coast.root.getObjectByName('coast:restrained-beach')).toBeInstanceOf(Mesh);
+    const beach = coast.root.getObjectByName('coast:restrained-beach') as Mesh<BufferGeometry, ShaderMaterial>;
+    expect(beach).toBeInstanceOf(Mesh);
+    expect(beach.material).toBeInstanceOf(ShaderMaterial);
+    expect(beach.material.toneMapped).toBe(false);
+    expect(coast.root.children.filter(({ name }) => name === 'coast:restrained-beach')).toHaveLength(1);
+    expect(coast.root.children.filter(({ name }) => name === 'coast:water')).toHaveLength(1);
     expect(coast.root.userData.horizonLayer).toBe('fogged-water-extension');
     expect(coast.root.getObjectByName('coast:view-screen')).toBeInstanceOf(InstancedMesh);
-    const water = coast.root.getObjectByName('coast:water') as Mesh;
+    const water = coast.root.getObjectByName('coast:water') as Mesh<BufferGeometry, ShaderMaterial>;
     expect(water.material).toBeInstanceOf(ShaderMaterial);
+    expect((water.material.uniforms.wetSandColor?.value as Vector3).toArray()).toEqual([
+      0xb3 / 255,
+      0x9c / 255,
+      0x72 / 255,
+    ]);
+    expect((water.material.uniforms.shallowWaterColor?.value as Vector3).toArray()).toEqual([
+      0x9a / 255,
+      0x9b / 255,
+      0x82 / 255,
+    ]);
+    expect((water.material.uniforms.midWaterColor?.value as Vector3).toArray()).toEqual([
+      0x67 / 255,
+      0x8a / 255,
+      0x97 / 255,
+    ]);
+    expect(water.material.uniforms.staticDetailStrength?.value).toBe(0.16);
+    expect((water.material.uniforms.foamColor?.value as Vector3).toArray()).toEqual([
+      0xd4 / 255,
+      0xc9 / 255,
+      0xa8 / 255,
+    ]);
+    expect((beach.material.uniforms.drySandColor?.value as Vector3).toArray()).toEqual([
+      0xb8 / 255,
+      0xa9 / 255,
+      0x8d / 255,
+    ]);
+    expect((beach.material.uniforms.wetSandColor?.value as Vector3).toArray())
+      .toEqual((water.material.uniforms.wetSandColor?.value as Vector3).toArray());
+    expect(water.material.uniforms.shoreBlendDistance?.value).toBe(12);
+    expect(water.material.uniforms.shoreFoamStart?.value).toBe(0.72);
+    expect(water.material.uniforms.shoreFoamEnd?.value).toBe(1.12);
+    expect(water.material.uniforms.waterDepth?.value).toBeGreaterThan(APP_CONFIG.camera.far);
+    const beachPositions = beach.geometry.getAttribute('position');
+    const waterPositions = water.geometry.getAttribute('position');
+    const beachShoreStart = beach.geometry.userData.shorelineVertexStart as number;
+    const shorelineCount = beach.geometry.userData.shorelineVertexCount as number;
+    expect(shorelineCount).toBe(129);
+    expect(water.geometry.userData).toMatchObject({ shorelineVertexStart: 0, shorelineVertexCount: shorelineCount, shorelineSegments: 128, depthSegments: 8 });
+    const shorelineDepths = new Set<number>();
+    for (let index = 0; index < shorelineCount; index += 1) {
+      const beachIndex = beachShoreStart + index;
+      expect(waterPositions.getX(index)).toBe(beachPositions.getX(beachIndex));
+      expect(waterPositions.getY(index)).toBe(beachPositions.getY(beachIndex));
+      expect(waterPositions.getZ(index)).toBe(beachPositions.getZ(beachIndex));
+      shorelineDepths.add(Math.round(waterPositions.getZ(index) * 1_000));
+    }
+    const shorelineRange = Math.max(...shorelineDepths) - Math.min(...shorelineDepths);
+    expect(shorelineRange).toBeGreaterThan(5_000);
+    expect(shorelineDepths.size).toBeGreaterThan(8);
+    expect(water.position.y).toBe(beach.position.y);
     water.geometry.computeBoundingBox();
-    expect((water.geometry.boundingBox?.max.y ?? 0) - (water.geometry.boundingBox?.min.y ?? 0)).toBeGreaterThan(APP_CONFIG.camera.far);
+    expect((water.geometry.boundingBox?.max.z ?? 0) - (water.geometry.boundingBox?.min.z ?? 0)).toBeGreaterThan(APP_CONFIG.camera.far);
+    expect(coast.metrics).toMatchObject({ beachLayers: 1, horizonLayers: 1 });
     expect(DISTRICT_DATA.coast.promenade.id).toBe('coastal-promenade');
     resources.disposeGroup('streets');
     resources.disposeGroup('coast');
@@ -138,15 +252,41 @@ describe('C07 environment and coast factories', () => {
     expect(environment.config).toBe(INJECTED_ATMOSPHERE);
     expect(environment).toMatchObject({ backgroundColor: 0x123456, fogColor: 0xfedcba, fogNear: 19, fogFar: 87 });
     expect(environment.metrics).toMatchObject({ shadowMapSize: 512, fogNear: 19, fogFar: 87 });
-    const water = standard.root.getObjectByName('coast:water') as Mesh<PlaneGeometry, ShaderMaterial>;
+    const water = standard.root.getObjectByName('coast:water') as Mesh<BufferGeometry, ShaderMaterial>;
     expect(standard.config).toBe(INJECTED_ATMOSPHERE);
-    expect((water.material.uniforms.fogColor?.value as Vector3).toArray()).toEqual([
+    expect((water.material.uniforms.horizonColor?.value as Vector3).toArray()).toEqual([
       0xe1 / 255,
       0x2a / 255,
       0x8f / 255,
     ]);
-    expect(water.geometry.parameters).toMatchObject({ widthSegments: 4, heightSegments: 4 });
-    expect(standard.metrics).toMatchObject({ waterSegments: 4, waterMotionAmplitude: 0.111 });
+    expect((water.material.uniforms.wetSandColor?.value as Vector3).toArray()).toEqual([
+      0xab / 255,
+      0xcd / 255,
+      0xef / 255,
+    ]);
+    expect((water.material.uniforms.shallowWaterColor?.value as Vector3).toArray()).toEqual([
+      0x23 / 255,
+      0x45 / 255,
+      0x67 / 255,
+    ]);
+    expect((water.material.uniforms.midWaterColor?.value as Vector3).toArray()).toEqual([
+      0x34 / 255,
+      0x56 / 255,
+      0x78 / 255,
+    ]);
+    expect((water.material.uniforms.foamColor?.value as Vector3).toArray()).toEqual([
+      0x12 / 255,
+      0x3a / 255,
+      0xbc / 255,
+    ]);
+    expect(water.material.uniforms.shoreBlendDistance?.value).toBe(9.5);
+    expect(water.material.uniforms.shoreFoamStart?.value).toBe(0.8);
+    expect(water.material.uniforms.shoreFoamEnd?.value).toBe(2.2);
+    expect(water.material.uniforms.horizonFadeStart?.value).toBe(65);
+    expect(water.material.uniforms.horizonFadeEnd?.value).toBe(410);
+    expect(water.material.uniforms.staticDetailStrength?.value).toBe(0.19);
+    expect(water.geometry.userData.depthSegments).toBe(4);
+    expect(standard.metrics).toMatchObject({ waterSegments: 4, waterMotionAmplitude: 0.111, waterStaticDetailStrength: 0.19, horizonFadeStart: 65, horizonFadeEnd: 410, shoreBlendDistance: 9.5, shoreFoamStart: 0.8, shoreFoamEnd: 2.2 });
     expect(reduced.metrics.waterMotionAmplitude).toBe(0.027);
     resources.disposeAll();
   });

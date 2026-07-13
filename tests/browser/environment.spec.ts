@@ -85,12 +85,16 @@ test('C07 exposes calibrated fog, soft shadows, coast depth, and deterministic f
   expect(initial.world.environment).toMatchObject({
     quality: 'high',
     motion: 'standard',
-    fogNear: 72,
-    fogFar: 330,
-    exposure: 1.08,
+    fogNear: 80,
+    fogFar: 380,
+    exposure: 1.04,
     shadowMapSize: 2048,
+    shadowBias: 0,
+    shadowNormalBias: 0.004,
     contactGrounding: true,
+    skyGradientRows: 256,
   });
+  expect(initial.world.environment?.ambientIntensity).toBeCloseTo(1.1644);
   expect(initial.world.coastEnvironment).toMatchObject({
     quality: 'high',
     motion: 'standard',
@@ -98,6 +102,11 @@ test('C07 exposes calibrated fog, soft shadows, coast depth, and deterministic f
     beachLayers: 1,
     horizonLayers: 1,
     clearanceIntersections: 0,
+    horizonFadeStart: 4.5,
+    horizonFadeEnd: 220,
+    shoreBlendDistance: 12,
+    shoreFoamStart: 0.72,
+    shoreFoamEnd: 1.12,
     collidable: false,
   });
   expect(initial.world.environment?.cameraViews).toEqual(C07_ENVIRONMENT_VIEWS);
@@ -130,12 +139,12 @@ test('C07 exposes calibrated fog, soft shadows, coast depth, and deterministic f
   const panChecksums: number[] = [];
   const panForwardX: number[] = [];
   let previousRenderCount = (await metrics(page)).runtime.renders;
-  for (const targetX of [-4, -2, 0, 2, 4]) {
+  for (const targetX of [-49, -47, -45, -43, -41]) {
     const probed = await command(page, {
       action: 'environment/probe',
       id: `shore-pan-${targetX}`,
-      position: [0, 1.85, 37],
-      target: [targetX, 0.8, 140],
+      position: [-120, 6.5, 37],
+      target: [targetX, 0.8, 55],
     });
     const frame = probed.world.environment?.activeFrame;
     expect(frame?.viewId).toBe(`shore-pan-${targetX}`);
@@ -169,14 +178,16 @@ test('C07 exposes calibrated fog, soft shadows, coast depth, and deterministic f
   }
 
   const qualityCases = [
-    { density: 'medium', motion: 'standard', shadowMapSize: 1024, waterSegments: 4, amplitude: 0.018 },
-    { density: 'low', motion: 'standard', shadowMapSize: 512, waterSegments: 1, amplitude: 0 },
-    { density: 'high', motion: 'reduced', shadowMapSize: 2048, waterSegments: 8, amplitude: 0 },
+    { density: 'medium', motion: 'standard', shadowMapSize: 1024, waterSegments: 4, amplitude: 0.018, fogNear: 90, fogFar: 399, ambientIntensity: 1.2212, exposure: 1.05 },
+    { density: 'low', motion: 'standard', shadowMapSize: 512, waterSegments: 1, amplitude: 0, fogNear: 108, fogFar: 437, ambientIntensity: 1.278, exposure: 1.08 },
+    { density: 'high', motion: 'reduced', shadowMapSize: 2048, waterSegments: 8, amplitude: 0, fogNear: 80, fogFar: 380, ambientIntensity: 1.1644, exposure: 1.04 },
   ] as const;
   for (const quality of qualityCases) {
     const rebuilt = await command(page, { action: 'landscape/set-settings', settings: { density: quality.density, motion: quality.motion } });
-    expect(rebuilt.world.environment).toMatchObject({ quality: quality.density, motion: quality.motion, shadowMapSize: quality.shadowMapSize });
-    expect(rebuilt.world.coastEnvironment).toMatchObject({ quality: quality.density, motion: quality.motion, waterSegments: quality.waterSegments, waterMotionAmplitude: quality.amplitude });
+    expect(rebuilt.world.environment).toMatchObject({ quality: quality.density, motion: quality.motion, shadowMapSize: quality.shadowMapSize, fogNear: quality.fogNear, exposure: quality.exposure });
+    expect(rebuilt.world.environment?.fogFar).toBeCloseTo(quality.fogFar);
+    expect(rebuilt.world.environment?.ambientIntensity).toBeCloseTo(quality.ambientIntensity);
+    expect(rebuilt.world.coastEnvironment).toMatchObject({ quality: quality.density, motion: quality.motion, waterSegments: quality.waterSegments, waterMotionAmplitude: quality.amplitude, waterStaticDetailStrength: 0.16, horizonFadeStart: 4.5, horizonFadeEnd: 220, shoreBlendDistance: 12, shoreFoamStart: 0.72, shoreFoamEnd: 1.12 });
     expect(rebuilt.world.coastEnvironment?.clearanceIntersections).toBe(0);
     expect(rebuilt.resources.groups).toBe(1);
     const repeated = await command(page, { action: 'landscape/set-settings', settings: { density: quality.density, motion: quality.motion } });
