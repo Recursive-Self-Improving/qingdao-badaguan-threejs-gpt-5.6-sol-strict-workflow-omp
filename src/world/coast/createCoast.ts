@@ -14,12 +14,11 @@ import {
   Vector3,
 } from 'three';
 
-import { COAST_CONFIG, ENVIRONMENT_CONFIG } from '../../app/config';
 import { sampleGroundHeight } from '../../exploration/navigation';
 import type { ResourceRegistry } from '../../render/ResourceRegistry';
 import { DISTRICT_DATA } from '../districtData';
 import type {
-  CoastConfig,
+  AtmosphereConfig,
   CoastController,
   CoastMetrics,
   DistrictData,
@@ -119,13 +118,14 @@ export function createCoast(
   group: string,
   settings: LandscapeSettings,
   data: DistrictData = DISTRICT_DATA,
-  config: CoastConfig = COAST_CONFIG,
+  config: AtmosphereConfig,
 ): CoastController {
   const root = new Group();
   root.name = 'coast';
   root.userData.collidable = false;
   root.userData.horizonLayer = 'fogged-water-extension';
-  const quality = ENVIRONMENT_CONFIG.quality[settings.density];
+  const quality = config.quality[settings.density];
+  const coast = config.coast;
 
   const promenadeGeometry = resources.register(createPromenadeGeometry(data), group);
   const promenadeMaterial = resources.register(new MeshStandardMaterial({ color: new Color(0xb6aa93), roughness: 0.94, metalness: 0 }), group);
@@ -137,7 +137,7 @@ export function createCoast(
   const sea = data.coast.seaBounds;
   const baseY = sampleGroundHeight(0, data.coast.edgeZ) + WATER_LEVEL_OFFSET;
   const beachGeometry = resources.register(new PlaneGeometry(sea.maxX - sea.minX, BEACH_DEPTH), group);
-  const beachMaterial = resources.register(new MeshStandardMaterial({ color: config.beachColor, roughness: 1, metalness: 0 }), group);
+  const beachMaterial = resources.register(new MeshStandardMaterial({ color: coast.beachColor, roughness: 1, metalness: 0 }), group);
   const beach = new Mesh(beachGeometry, beachMaterial);
   beach.name = 'coast:restrained-beach';
   beach.rotation.x = -Math.PI * 0.5;
@@ -152,8 +152,8 @@ export function createCoast(
   const waterMaterial = resources.register(new ShaderMaterial({
     toneMapped: false,
     uniforms: {
-      waterColor: { value: new Vector3(channel(config.waterColor, 16) / 255, channel(config.waterColor, 8) / 255, channel(config.waterColor, 0) / 255) },
-      fogColor: { value: new Vector3(channel(ENVIRONMENT_CONFIG.sky.horizon, 16) / 255, channel(ENVIRONMENT_CONFIG.sky.horizon, 8) / 255, channel(ENVIRONMENT_CONFIG.sky.horizon, 0) / 255) },
+      waterColor: { value: new Vector3(channel(coast.waterColor, 16) / 255, channel(coast.waterColor, 8) / 255, channel(coast.waterColor, 0) / 255) },
+      fogColor: { value: new Vector3(channel(coast.horizonColor, 16) / 255, channel(coast.horizonColor, 8) / 255, channel(coast.horizonColor, 0) / 255) },
     },
     vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
     fragmentShader: 'varying vec2 vUv; uniform vec3 waterColor; uniform vec3 fogColor; void main(){ float fogMix=smoothstep(0.035,0.24,vUv.y); gl_FragColor=vec4(mix(waterColor,fogColor,fogMix),1.0); }',
@@ -184,7 +184,9 @@ export function createCoast(
   screen.instanceMatrix.needsUpdate = true;
   root.add(screen);
 
-  const amplitude = settings.motion === 'reduced' || settings.density === 'low' ? 0 : config.standardMotionAmplitude;
+  const amplitude = settings.density === 'low' || settings.motion === 'reduced'
+    ? coast.reducedMotionAmplitude
+    : coast.standardMotionAmplitude;
   let captureTime: number | null = null;
   const applyMotion = (time: number): void => {
     water.position.y = baseY + (amplitude === 0 ? 0 : Math.sin(time * 0.41) * amplitude * 0.18);

@@ -1,4 +1,4 @@
-import type { CoastConfig, EnvironmentConfig } from '../world/types';
+import type { AtmosphereConfig } from '../world/types';
 
 export const APP_COPY = {
   boot: 'Preparing the Badaguan experience…',
@@ -33,7 +33,7 @@ export const APP_CONFIG = {
   },
 } as const;
 
-export const ENVIRONMENT_CONFIG: EnvironmentConfig = Object.freeze({
+export const ATMOSPHERE_CONFIG: AtmosphereConfig = Object.freeze({
   sky: Object.freeze({ zenith: 0x7895a8, horizon: 0x7c867f, ground: 0x7c867f }),
   fog: Object.freeze({ color: 0xb9c0bb, near: 72, far: 330 }),
   hemisphere: Object.freeze({ skyColor: 0xb8cccf, groundColor: 0x6f6858, intensity: 1.42 }),
@@ -55,13 +55,11 @@ export const ENVIRONMENT_CONFIG: EnvironmentConfig = Object.freeze({
     Object.freeze({ id: 'landmark', position: Object.freeze([0, 4.35, 35] as const), target: Object.freeze([36, 6.4, 25.5] as const) }),
     Object.freeze({ id: 'shore', position: Object.freeze([0, 1.85, 37] as const), target: Object.freeze([0, 0.8, 140] as const) }),
   ]),
-});
-
-export const COAST_CONFIG: CoastConfig = Object.freeze({
-  waterColor: 0x557f8e,
-  waterRoughness: 0.72,
-  beachColor: 0xb8a98d,
-  horizonColor: 0x9cabb0,
-  standardMotionAmplitude: 0.018,
-  reducedMotionAmplitude: 0,
+  coast: Object.freeze({
+    waterColor: 0x557f8e,
+    beachColor: 0xb8a98d,
+    horizonColor: 0x7c867f,
+    standardMotionAmplitude: 0.018,
+    reducedMotionAmplitude: 0,
+  }),
 });

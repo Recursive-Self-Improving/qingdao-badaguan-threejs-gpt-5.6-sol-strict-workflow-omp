@@ -473,7 +473,16 @@ export interface EnvironmentQualityConfig {
   readonly waterSegments: 1 | 4 | 8;
 }
 
-export interface EnvironmentConfig {
+export interface CoastConfig {
+  readonly waterColor: number;
+  readonly beachColor: number;
+  /** Calibrated to the sky horizon by default, but separate because the water shader is not color-managed like the sky texture. */
+  readonly horizonColor: number;
+  readonly standardMotionAmplitude: number;
+  readonly reducedMotionAmplitude: number;
+}
+
+export interface AtmosphereConfig {
   readonly sky: { readonly zenith: number; readonly horizon: number; readonly ground: number };
   readonly fog: { readonly color: number; readonly near: number; readonly far: number };
   readonly hemisphere: { readonly skyColor: number; readonly groundColor: number; readonly intensity: number };
@@ -485,6 +494,7 @@ export interface EnvironmentConfig {
   };
   readonly quality: Readonly<Record<LandscapeDensity, EnvironmentQualityConfig>>;
   readonly cameraViews: readonly EnvironmentCameraView[];
+  readonly coast: CoastConfig;
 }
 
 export interface EnvironmentMetrics {
@@ -502,7 +512,7 @@ export interface EnvironmentMetrics {
 
 export interface EnvironmentController {
   readonly root: Object3D;
-  readonly config: EnvironmentConfig;
+  readonly config: AtmosphereConfig;
   readonly metrics: EnvironmentMetrics;
   readonly cameraViews: readonly EnvironmentCameraView[];
   readonly backgroundColor: number;
@@ -515,14 +525,6 @@ export interface EnvironmentController {
   setCaptureTime(time: number | null): void;
 }
 
-export interface CoastConfig {
-  readonly waterColor: number;
-  readonly waterRoughness: number;
-  readonly beachColor: number;
-  readonly horizonColor: number;
-  readonly standardMotionAmplitude: number;
-  readonly reducedMotionAmplitude: 0;
-}
 
 export interface CoastMetrics {
   readonly quality: LandscapeDensity;
@@ -539,7 +541,7 @@ export interface CoastMetrics {
 
 export interface CoastController {
   readonly root: Object3D;
-  readonly config: CoastConfig;
+  readonly config: AtmosphereConfig;
   readonly metrics: CoastMetrics;
   update(frame: LandscapeUpdateFrame): void;
   reset(): void;

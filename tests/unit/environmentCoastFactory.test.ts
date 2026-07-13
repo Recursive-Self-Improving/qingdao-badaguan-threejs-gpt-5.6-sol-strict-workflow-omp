@@ -1,15 +1,32 @@
-import { DirectionalLight, HemisphereLight, InstancedMesh, Mesh, ShaderMaterial } from 'three';
+import { DirectionalLight, HemisphereLight, InstancedMesh, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 
-import { APP_CONFIG, COAST_CONFIG, ENVIRONMENT_CONFIG } from '../../src/app/config';
+import { APP_CONFIG, ATMOSPHERE_CONFIG } from '../../src/app/config';
 import { ResourceRegistry } from '../../src/render/ResourceRegistry';
 import { createCoast } from '../../src/world/coast/createCoast';
 import { DISTRICT_DATA } from '../../src/world/districtData';
 import { createEnvironment } from '../../src/world/environment/createEnvironment';
 import { createStreetNetwork } from '../../src/world/streets/createStreetNetwork';
+import type { AtmosphereConfig } from '../../src/world/types';
 
 const HIGH_STANDARD = Object.freeze({ density: 'high' as const, motion: 'standard' as const });
 const LOW_REDUCED = Object.freeze({ density: 'low' as const, motion: 'reduced' as const });
+
+const INJECTED_ATMOSPHERE: AtmosphereConfig = Object.freeze({
+  ...ATMOSPHERE_CONFIG,
+  sky: Object.freeze({ ...ATMOSPHERE_CONFIG.sky, horizon: 0x123456 }),
+  fog: Object.freeze({ color: 0xfedcba, near: 19, far: 87 }),
+  quality: Object.freeze({
+    ...ATMOSPHERE_CONFIG.quality,
+    high: Object.freeze({ ...ATMOSPHERE_CONFIG.quality.high, shadowMapSize: 512, waterSegments: 4 }),
+  }),
+  coast: Object.freeze({
+    ...ATMOSPHERE_CONFIG.coast,
+    horizonColor: 0xe12a8f,
+    standardMotionAmplitude: 0.111,
+    reducedMotionAmplitude: 0.027,
+  }),
+});
 
 function deeplyFrozen(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return true;
@@ -18,15 +35,17 @@ function deeplyFrozen(value: unknown): boolean {
 
 describe('C07 environment and coast factories', () => {
   it('publishes immutable calibrated morning light, fog, quality, and five-view contracts', () => {
-    expect(deeplyFrozen(ENVIRONMENT_CONFIG)).toBe(true);
-    expect(deeplyFrozen(COAST_CONFIG)).toBe(true);
-    expect(ENVIRONMENT_CONFIG.cameraViews.map(({ id }) => id)).toEqual([
+    expect(deeplyFrozen(ATMOSPHERE_CONFIG)).toBe(true);
+    expect(ATMOSPHERE_CONFIG.cameraViews.map(({ id }) => id)).toEqual([
       'spawn', 'deep-shade', 'uphill-vista', 'landmark', 'shore',
     ]);
-    expect(ENVIRONMENT_CONFIG.fog.near).toBeGreaterThan(60);
-    expect(ENVIRONMENT_CONFIG.quality.high.shadowMapSize).toBeGreaterThan(ENVIRONMENT_CONFIG.quality.medium.shadowMapSize);
-    expect(ENVIRONMENT_CONFIG.quality.medium.shadowMapSize).toBeGreaterThan(ENVIRONMENT_CONFIG.quality.low.shadowMapSize);
-    for (const quality of Object.values(ENVIRONMENT_CONFIG.quality)) {
+    expect(ATMOSPHERE_CONFIG.fog.color).toBe(0xb9c0bb);
+    expect(ATMOSPHERE_CONFIG.sky.horizon).toBe(0x7c867f);
+    expect(ATMOSPHERE_CONFIG.coast.horizonColor).toBe(0x7c867f);
+    expect(ATMOSPHERE_CONFIG.fog.near).toBeGreaterThan(60);
+    expect(ATMOSPHERE_CONFIG.quality.high.shadowMapSize).toBeGreaterThan(ATMOSPHERE_CONFIG.quality.medium.shadowMapSize);
+    expect(ATMOSPHERE_CONFIG.quality.medium.shadowMapSize).toBeGreaterThan(ATMOSPHERE_CONFIG.quality.low.shadowMapSize);
+    for (const quality of Object.values(ATMOSPHERE_CONFIG.quality)) {
       expect(quality.exposure).toBeGreaterThanOrEqual(1);
       expect(quality.exposure).toBeLessThanOrEqual(1.1);
       expect(Math.abs(quality.shadowBias)).toBeLessThan(0.001);
@@ -37,8 +56,8 @@ describe('C07 environment and coast factories', () => {
 
   it('creates soft sun and fill lights with quality-aware shadow calibration and no leaked resources', () => {
     const resources = new ResourceRegistry();
-    const high = createEnvironment(resources, 'environment-high', HIGH_STANDARD);
-    const low = createEnvironment(resources, 'environment-low', LOW_REDUCED);
+    const high = createEnvironment(resources, 'environment-high', HIGH_STANDARD, ATMOSPHERE_CONFIG);
+    const low = createEnvironment(resources, 'environment-low', LOW_REDUCED, ATMOSPHERE_CONFIG);
     const sun = high.root.getObjectByName('environment:morning-sun');
     const fill = high.root.getObjectByName('environment:hemisphere-fill');
     expect(sun).toBeInstanceOf(DirectionalLight);
@@ -57,7 +76,7 @@ describe('C07 environment and coast factories', () => {
   it('owns promenade, beach, fogged water horizon, and screen exactly once outside streets', () => {
     const resources = new ResourceRegistry();
     const streets = createStreetNetwork(resources, 'streets');
-    const coast = createCoast(resources, 'coast', HIGH_STANDARD);
+    const coast = createCoast(resources, 'coast', HIGH_STANDARD, DISTRICT_DATA, ATMOSPHERE_CONFIG);
     expect(streets.getObjectByName('street:coastal-promenade')).toBeUndefined();
     expect(streets.getObjectByName('street:noncollidable-sea')).toBeUndefined();
     expect(streets.getObjectByName('street:coastal-view-screen')).toBeUndefined();
@@ -85,8 +104,8 @@ describe('C07 environment and coast factories', () => {
 
   it('animates restrained deterministic water while reduced and low modes remain still', () => {
     const resources = new ResourceRegistry();
-    const standard = createCoast(resources, 'coast-standard', HIGH_STANDARD);
-    const reduced = createCoast(resources, 'coast-reduced', LOW_REDUCED);
+    const standard = createCoast(resources, 'coast-standard', HIGH_STANDARD, DISTRICT_DATA, ATMOSPHERE_CONFIG);
+    const reduced = createCoast(resources, 'coast-reduced', LOW_REDUCED, DISTRICT_DATA, ATMOSPHERE_CONFIG);
     const standardInitial = standard.metrics.waterTransformChecksum;
     const reducedInitial = reduced.metrics.waterTransformChecksum;
     standard.update({ elapsedSeconds: 7.25, deltaSeconds: 1 / 60 });
@@ -101,6 +120,34 @@ describe('C07 environment and coast factories', () => {
     expect(standard.metrics.waterTransformChecksum).toBe(frozen);
     standard.reset();
     expect(standard.metrics.waterTransformChecksum).toBe(standardInitial);
+    resources.disposeAll();
+  });
+
+  it('derives both environment and coast behavior from one unmistakably nondefault atmosphere', () => {
+    const resources = new ResourceRegistry();
+    const environment = createEnvironment(resources, 'injected-environment', HIGH_STANDARD, INJECTED_ATMOSPHERE);
+    const standard = createCoast(resources, 'injected-standard', HIGH_STANDARD, DISTRICT_DATA, INJECTED_ATMOSPHERE);
+    const reduced = createCoast(
+      resources,
+      'injected-reduced',
+      Object.freeze({ density: 'high' as const, motion: 'reduced' as const }),
+      DISTRICT_DATA,
+      INJECTED_ATMOSPHERE,
+    );
+
+    expect(environment.config).toBe(INJECTED_ATMOSPHERE);
+    expect(environment).toMatchObject({ backgroundColor: 0x123456, fogColor: 0xfedcba, fogNear: 19, fogFar: 87 });
+    expect(environment.metrics).toMatchObject({ shadowMapSize: 512, fogNear: 19, fogFar: 87 });
+    const water = standard.root.getObjectByName('coast:water') as Mesh<PlaneGeometry, ShaderMaterial>;
+    expect(standard.config).toBe(INJECTED_ATMOSPHERE);
+    expect((water.material.uniforms.fogColor?.value as Vector3).toArray()).toEqual([
+      0xe1 / 255,
+      0x2a / 255,
+      0x8f / 255,
+    ]);
+    expect(water.geometry.parameters).toMatchObject({ widthSegments: 4, heightSegments: 4 });
+    expect(standard.metrics).toMatchObject({ waterSegments: 4, waterMotionAmplitude: 0.111 });
+    expect(reduced.metrics.waterMotionAmplitude).toBe(0.027);
     resources.disposeAll();
   });
 });

@@ -1,4 +1,5 @@
 import { Group } from 'three';
+import { ATMOSPHERE_CONFIG } from '../app/config';
 import { resolveNavigation } from '../exploration/navigation';
 import type { ResourceRegistry } from '../render/ResourceRegistry';
 import { DISTRICT_DATA } from './districtData';
@@ -11,7 +12,7 @@ import { createLandmarks } from './architecture/createLandmarks';
 import { createLandscape } from './landscape/createLandscape';
 import { createEnvironment } from './environment/createEnvironment';
 import { createCoast } from './coast/createCoast';
-import type { LandscapeSettings, WorldBuildResult } from './types';
+import type { AtmosphereConfig, LandscapeSettings, WorldBuildResult } from './types';
 const DEFAULT_LANDSCAPE_SETTINGS: LandscapeSettings = Object.freeze({
   density: 'high',
   motion: 'standard',
@@ -22,14 +23,15 @@ export function createWorld(
   resources: ResourceRegistry,
   group: string,
   settings: LandscapeSettings = DEFAULT_LANDSCAPE_SETTINGS,
+  atmosphere: AtmosphereConfig = ATMOSPHERE_CONFIG,
 ): WorldBuildResult {
   const root = new Group();
   root.name = 'badaguan-district';
-  const environment = createEnvironment(resources, group, settings);
+  const environment = createEnvironment(resources, group, settings, atmosphere);
   root.add(environment.root);
   root.add(createTerrain(resources, group));
   root.add(createStreetNetwork(resources, group));
-  const coast = createCoast(resources, group, settings, DISTRICT_DATA);
+  const coast = createCoast(resources, group, settings, DISTRICT_DATA, atmosphere);
   root.add(coast.root);
   const villaKit = createVillaKit(resources, group);
   createVillaDistrict(villaKit, DISTRICT_DATA.architectureSites);

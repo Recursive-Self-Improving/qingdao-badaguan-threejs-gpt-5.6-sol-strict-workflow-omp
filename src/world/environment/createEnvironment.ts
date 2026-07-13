@@ -9,10 +9,9 @@ import {
   UnsignedByteType,
 } from 'three';
 
-import { ENVIRONMENT_CONFIG } from '../../app/config';
 import type { ResourceRegistry } from '../../render/ResourceRegistry';
 import type {
-  EnvironmentConfig,
+  AtmosphereConfig,
   EnvironmentController,
   EnvironmentMetrics,
   LandscapeSettings,
@@ -20,7 +19,7 @@ import type {
 } from '../types';
 
 
-function validateConfig(config: EnvironmentConfig): void {
+function validateConfig(config: AtmosphereConfig): void {
   if (!(config.fog.near > 0 && config.fog.far > config.fog.near)) {
     throw new RangeError('Environment fog must have a positive, ordered depth range.');
   }
@@ -34,7 +33,7 @@ export function createEnvironment(
   resources: ResourceRegistry,
   group: string,
   settings: LandscapeSettings,
-  config: EnvironmentConfig = ENVIRONMENT_CONFIG,
+  config: AtmosphereConfig,
 ): EnvironmentController {
   validateConfig(config);
   const quality = config.quality[settings.density];
