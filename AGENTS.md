@@ -24,3 +24,7 @@
 - Treat a production capture as nonblank only after decoding its pixels and verifying nonzero content; file existence or byte size alone is insufficient.
 - Debug annotation mapping may use matching numbered badges when each badge uniquely identifies its target; avoid ambiguous leader lines that can misattribute labels.
 - Establish avenue identity through cross-road hierarchy and clearance cues, not a single road’s width or decoration in isolation.
+- Generation groups must own every disposable generation resource, including lights and shadow resources—not just textures, materials, and geometries.
+- Representative profiling must disable periodic metrics serialization, observe quality through lightweight state, move the camera without extra renders, and measure rAF duration from one clock origin.
+- Record the actual renderer and acceleration path, and keep performance budgets honest: SwiftShader failure is an environment limit, not hardware evidence or a reason to weaken thresholds.
+- Pose reset breaks contiguous Auto sampling; give user-reset live feedback a short priority lease and queue the latest Auto announcement behind it.
