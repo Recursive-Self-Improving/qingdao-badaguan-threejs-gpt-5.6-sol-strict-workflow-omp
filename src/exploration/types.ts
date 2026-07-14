@@ -6,6 +6,7 @@ export type InputAction =
   | 'move-left'
   | 'move-right'
   | 'reset';
+export type MovementAction = Exclude<InputAction, 'reset'>;
 
 export type InputClearReason =
   | 'disabled'
@@ -13,6 +14,7 @@ export type InputClearReason =
   | 'hidden'
   | 'focus'
   | 'orientation'
+  | 'viewport'
   | 'lock-exit'
   | 'dispose';
 

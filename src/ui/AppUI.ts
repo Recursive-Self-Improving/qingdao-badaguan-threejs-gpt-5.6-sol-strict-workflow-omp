@@ -7,7 +7,10 @@ import type {
   AppStateInvariant,
   PointerFallbackReason,
 } from '../app/appState';
-import type { PreferenceSnapshot } from '../platform/preferences';
+import { shouldOfferTouchControls, type PreferenceSnapshot } from '../platform/preferences';
+import type { MovementAction } from '../exploration/types';
+import type { InteractionViewportMeasurement } from '../platform/viewport';
+import { TouchControls } from './touchControls';
 
 export type AppUIAction = Extract<
   AppEvent,
@@ -20,7 +23,7 @@ export type AppUIAction = Extract<
       | 'OPEN_PANEL'
       | 'CLOSE_PANEL';
   }
->;
+> | { readonly type: 'RESET' };
 
 export type AppUIActionHandler = (action: AppUIAction) => void;
 
@@ -32,12 +35,14 @@ export interface AppUIProjection {
 export interface AppUIOptions {
   readonly onAction: AppUIActionHandler;
   readonly preferences: PreferenceSnapshot;
+  readonly onInputAction: (action: MovementAction, pressed: boolean) => void;
 }
 
 type UICommand =
   | 'start'
   | 'pause'
   | 'resume'
+  | 'reset'
   | 'retry'
   | 'open-help'
   | 'open-settings'
@@ -178,6 +183,7 @@ function isUICommand(value: string | undefined): value is UICommand {
     case 'pause':
     case 'resume':
     case 'retry':
+    case 'reset':
     case 'open-help':
     case 'open-settings':
     case 'close-panel':
@@ -195,6 +201,8 @@ function actionForCommand(command: UICommand): AppUIAction {
       return { type: 'PAUSE' };
     case 'resume':
       return { type: 'RESUME' };
+    case 'reset':
+      return { type: 'RESET' };
     case 'retry':
       return { type: 'RETRY' };
     case 'open-help':
@@ -477,6 +485,16 @@ function updateButton(button: HTMLButtonElement, spec: ActionSpec, className: st
   button.dataset.variant = spec.variant;
   button.dataset.testid = spec.testId;
   button.textContent = spec.label;
+  if (spec.command === 'reset') {
+    button.setAttribute('aria-label', 'Reset position to the safe point');
+    button.removeAttribute('aria-keyshortcuts');
+  } else if (spec.command === 'pause') {
+    button.removeAttribute('aria-label');
+    button.setAttribute('aria-keyshortcuts', 'Escape');
+  } else {
+    button.removeAttribute('aria-label');
+    button.removeAttribute('aria-keyshortcuts');
+  }
 
   if (spec.ariaControls === undefined) {
     button.removeAttribute('aria-controls');
@@ -622,6 +640,8 @@ function createHelpPanel(documentRoot: Document): DocumentFragment {
 
   content.className = 'drawer-scroll-region';
   content.dataset.testid = 'help-disclosure';
+  content.tabIndex = 0;
+  content.setAttribute('aria-label', 'Help content');
   intro.className = 'disclosure-intro';
   intro.textContent =
     'Use the controls below to explore. This disclosure separates source-backed context from artistic interpretation. Only the broad cues listed as sourced context are treated as source-bounded; exact composition choices are authored.';
@@ -751,6 +771,7 @@ export class AppUI {
   private readonly onAction: AppUIActionHandler;
   private readonly preferences: PreferenceSnapshot;
   private currentPanel: AppPanel = 'none';
+  private readonly touchControls: TouchControls;
   private canFocusStart = false;
   private canFocusResume = false;
   private lastAnnouncementKey: string | null = null;
@@ -762,6 +783,9 @@ export class AppUI {
     this.elements = collectElements(this.documentRoot);
     this.onAction = options.onAction;
     this.preferences = options.preferences;
+    const touchRoot = this.documentRoot.createElement('div');
+    this.elements.interfaceLayer.append(touchRoot);
+    this.touchControls = new TouchControls({ root: touchRoot, onAction: options.onInputAction });
     this.elements.interfaceLayer.addEventListener('click', this.handleClick);
     this.documentRoot.addEventListener('keydown', this.handleKeydown);
   }
@@ -787,6 +811,9 @@ export class AppUI {
     this.renderUtilityControls(state, invariant.panel);
     this.renderPanels(invariant.panel, previousPanel);
     this.renderDrawerIsolation(invariant.panel);
+    const touchVisible = invariant.isExploring && invariant.control === 'drag' && invariant.panel === 'none'
+      && shouldOfferTouchControls(this.preferences);
+    this.touchControls.sync({ visible: touchVisible, enabled: touchVisible });
     this.renderStatus(view.status, stateAnnouncementKey);
     this.applyFocus(previousPanel, previouslyReady, focusedCommand);
   }
@@ -799,6 +826,33 @@ export class AppUI {
     return this.currentPanel === 'none' && this.canFocusResume && this.focusCommand('resume');
   }
 
+  focusCanvas(): boolean {
+    if (this.currentPanel !== 'none' || this.elements.canvas.tabIndex !== 0) return false;
+    this.elements.canvas.focus({ preventScroll: true });
+    return this.documentRoot.activeElement === this.elements.canvas;
+  }
+
+  clearTouchControls(): void { this.touchControls.clear(); }
+
+  get interactionViewportElement(): HTMLElement { return this.elements.experience; }
+
+  setInteractionViewport(measurement: InteractionViewportMeasurement): void {
+    const style = this.elements.experience.style;
+    style.setProperty('--interaction-visible-left', `${measurement.visibleLeft}px`);
+    style.setProperty('--interaction-visible-top', `${measurement.visibleTop}px`);
+    style.setProperty('--interaction-visible-right', `${measurement.visibleRight}px`);
+    style.setProperty('--interaction-visible-bottom', `${measurement.visibleBottom}px`);
+    style.setProperty('--interaction-visible-width', `${measurement.visibleWidth}px`);
+    style.setProperty('--interaction-visible-height', `${measurement.visibleHeight}px`);
+    this.elements.experience.dataset.interactionOrientation = measurement.orientation;
+    this.touchControls.setViewport(measurement);
+  }
+
+  announceReset(): void {
+    this.elements.status.textContent = 'Position reset to the safe point.';
+    this.lastAnnouncementKey = null;
+  }
+
   destroy(): void {
     if (this.destroyed) {
       return;
@@ -806,6 +860,7 @@ export class AppUI {
 
     this.elements.interfaceLayer.removeEventListener('click', this.handleClick);
     this.documentRoot.removeEventListener('keydown', this.handleKeydown);
+    this.touchControls.destroy();
     this.destroyed = true;
   }
 
@@ -868,7 +923,13 @@ export class AppUI {
     } else {
       this.elements.overlay.removeAttribute('aria-busy');
     }
-    this.elements.canvas.removeAttribute('tabindex');
+    if (invariant.isExploring && invariant.panel === 'none') {
+      this.elements.canvas.tabIndex = 0;
+      this.elements.canvas.dataset.lookActive = invariant.control === 'drag' ? 'true' : 'false';
+    } else {
+      this.elements.canvas.removeAttribute('tabindex');
+      delete this.elements.canvas.dataset.lookActive;
+    }
     if (this.elements.status.getAttribute('role') !== 'status') {
       this.elements.status.setAttribute('role', 'status');
     }
@@ -903,6 +964,11 @@ export class AppUI {
 
   private renderUtilityControls(state: AppState, panel: AppPanel): void {
     const specs: ActionSpec[] = [];
+    const operational = state.kind === 'exploring' || state.kind === 'paused'
+      || (state.kind === 'degraded' && (state.underlying?.kind === 'exploring' || state.underlying?.kind === 'paused'));
+    if (operational) {
+      specs.push({ command: 'reset', label: 'Reset', variant: 'secondary', testId: 'reset-button' });
+    }
     const helpAvailable = state.kind !== 'boot' && state.kind !== 'loading';
     const settingsAvailable =
       state.kind === 'onboarding' ||
@@ -964,6 +1030,7 @@ export class AppUI {
     const covered = panel !== 'none';
     this.elements.overlay.inert = covered;
     this.elements.controls.inert = covered;
+    this.elements.canvas.inert = covered;
   }
 
   private renderStatus(status: string, key: string): void {

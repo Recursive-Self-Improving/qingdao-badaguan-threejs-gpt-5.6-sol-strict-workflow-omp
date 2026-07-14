@@ -1,4 +1,4 @@
-import type { InputClearReason, MovementAxes, MovementInputSource } from './types';
+import type { InputClearReason, MovementAction, MovementAxes, MovementInputSource } from './types';
 
 const FORWARD_W = 1 << 0;
 const FORWARD_ARROW = 1 << 1;
@@ -16,6 +16,13 @@ const LEFT = LEFT_A | LEFT_ARROW;
 const RIGHT = RIGHT_D | RIGHT_ARROW;
 const DIAGONAL_SCALE = 1 / Math.SQRT2;
 
+const EXTERNAL_BITS: Record<MovementAction, number> = {
+  'move-forward': 1 << 0,
+  'move-backward': 1 << 1,
+  'move-left': 1 << 2,
+  'move-right': 1 << 3,
+};
+
 interface KeyboardDocument {
   readonly hidden: boolean;
   readonly activeElement: EventTarget | null;
@@ -30,6 +37,7 @@ export interface InputControllerOptions {
   readonly lifecycleTarget?: EventTarget;
   readonly document?: KeyboardDocument;
   readonly onClear?: (reason: InputClearReason) => void;
+  readonly onReset?: () => void;
 }
 
 interface KeyboardInputEvent extends Event {
@@ -72,8 +80,11 @@ export class InputController implements MovementInputSource {
   private readonly lifecycleTarget: EventTarget;
   private readonly documentRoot: KeyboardDocument;
   private readonly onClear: ((reason: InputClearReason) => void) | undefined;
-  private held = 0;
+  private readonly onReset: (() => void) | undefined;
+  private keyboardHeld = 0;
+  private externalHeld = 0;
   private resetLatched = false;
+  private intentionalFocus = true;
   private enabled = false;
   private started = false;
   private disposed = false;
@@ -83,14 +94,17 @@ export class InputController implements MovementInputSource {
     const bit = keyBit(event);
     if (bit === 0 || event.metaKey || event.ctrlKey || event.altKey) return;
     event.preventDefault();
-    if (bit === RESET_R && (this.held & RESET_R) === 0) this.resetLatched = true;
-    this.held |= bit;
+    if (bit === RESET_R && (this.keyboardHeld & RESET_R) === 0) {
+      this.resetLatched = true;
+      this.onReset?.();
+    }
+    this.keyboardHeld |= bit;
   };
 
   private readonly onKeyUp = (event: Event): void => {
     if (!isKeyboardInputEvent(event)) return;
     const bit = keyBit(event);
-    if (bit !== 0) this.held &= ~bit;
+    if (bit !== 0) this.keyboardHeld &= ~bit;
   };
 
   private readonly onBlur = (): void => this.clear('blur');
@@ -111,6 +125,7 @@ export class InputController implements MovementInputSource {
     this.lifecycleTarget = options.lifecycleTarget ?? window;
     this.documentRoot = options.document ?? document;
     this.onClear = options.onClear;
+    this.onReset = options.onReset;
   }
 
   start(): void {
@@ -131,9 +146,24 @@ export class InputController implements MovementInputSource {
     if (!enabled) this.clear('disabled');
   }
 
+  setIntentionalFocus(active: boolean): void {
+    if (this.disposed || active === this.intentionalFocus) return;
+    this.intentionalFocus = active;
+    if (!active) this.clear('focus');
+  }
+
+  setAction(action: MovementAction, pressed: boolean): void {
+    if (this.disposed) return;
+    const bit = EXTERNAL_BITS[action];
+    if (pressed && this.enabled) this.externalHeld |= bit;
+    else this.externalHeld &= ~bit;
+  }
+
   readMovement(target: MovementAxes): MovementAxes {
-    const forward = Number((this.held & FORWARD) !== 0) - Number((this.held & BACKWARD) !== 0);
-    const right = Number((this.held & RIGHT) !== 0) - Number((this.held & LEFT) !== 0);
+    const forward = Number((this.keyboardHeld & FORWARD) !== 0 || (this.externalHeld & EXTERNAL_BITS['move-forward']) !== 0)
+      - Number((this.keyboardHeld & BACKWARD) !== 0 || (this.externalHeld & EXTERNAL_BITS['move-backward']) !== 0);
+    const right = Number((this.keyboardHeld & RIGHT) !== 0 || (this.externalHeld & EXTERNAL_BITS['move-right']) !== 0)
+      - Number((this.keyboardHeld & LEFT) !== 0 || (this.externalHeld & EXTERNAL_BITS['move-left']) !== 0);
     if (forward !== 0 && right !== 0) {
       target.forward = forward * DIAGONAL_SCALE;
       target.right = right * DIAGONAL_SCALE;
@@ -151,7 +181,8 @@ export class InputController implements MovementInputSource {
   }
 
   clear(reason: InputClearReason): void {
-    this.held = 0;
+    this.keyboardHeld = 0;
+    this.externalHeld = 0;
     this.resetLatched = false;
     this.onClear?.(reason);
   }
@@ -174,6 +205,7 @@ export class InputController implements MovementInputSource {
 
   private acceptsKeyboardEvent(event: KeyboardInputEvent): boolean {
     const active = this.documentRoot.activeElement;
+    if (!this.intentionalFocus) return false;
     if (active !== null && active !== this.documentRoot.body && active !== this.canvas) return false;
     const target = event.target;
     return target === null

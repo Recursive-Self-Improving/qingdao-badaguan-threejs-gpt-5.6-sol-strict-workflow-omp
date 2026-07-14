@@ -7,6 +7,10 @@ export interface PreferenceSnapshot {
   readonly keyboardControlsAvailable: true;
 }
 
+export function shouldOfferTouchControls(snapshot: PreferenceSnapshot): boolean {
+  return snapshot.primaryPointerCoarse || (snapshot.touchCapable && !snapshot.anyPointerFine);
+}
+
 export interface PreferenceEnvironment {
   readonly matchMedia?: (query: string) => Pick<MediaQueryList, 'matches'>;
   readonly maxTouchPoints?: number;

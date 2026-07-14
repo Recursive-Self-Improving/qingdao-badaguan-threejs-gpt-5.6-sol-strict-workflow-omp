@@ -204,6 +204,11 @@ test('document pointer-lock error enters keyboard fallback without retrying', as
   await invokeHarness(page, 'pointerError');
   await expect(page.locator('#app-detail')).toContainText('Mouse lock could not start');
   expect((await harnessSnapshot(page)).requests).toHaveLength(1);
+  await page.keyboard.press('Escape');
+  await page.getByTestId('resume-button').click();
+  await page.waitForTimeout(100);
+  await expect(page.locator('#app')).toHaveAttribute('data-control-mode', 'drag');
+  expect((await harnessSnapshot(page)).requests).toHaveLength(1);
 });
 
 test('denial keeps keyboard fallback live without a request loop and reset returns authored pose', async ({ page }, testInfo) => {
@@ -216,6 +221,13 @@ test('denial keeps keyboard fallback live without a request loop and reset retur
   await page.keyboard.down('KeyW');
   await waitForCameraChange(page, before.camera.position);
   await page.keyboard.up('KeyW');
+  expect((await harnessSnapshot(page)).requests).toHaveLength(1);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('resume-button')).toBeFocused();
+  await page.getByTestId('resume-button').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-control-mode', 'drag');
+  await page.waitForTimeout(100);
   expect((await harnessSnapshot(page)).requests).toHaveLength(1);
 
   await page.keyboard.press('KeyR');

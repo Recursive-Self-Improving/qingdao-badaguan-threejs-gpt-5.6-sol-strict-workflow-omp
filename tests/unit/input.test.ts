@@ -94,7 +94,8 @@ describe('InputController', () => {
     const canvas = new EventTarget();
     const interactive = new EventTarget();
     const documentRoot = new DocumentDouble(keyboard);
-    const controller = new InputController({ canvas, keyboardTarget: keyboard, lifecycleTarget: keyboard, document: documentRoot });
+    const onReset = vi.fn();
+    const controller = new InputController({ canvas, keyboardTarget: keyboard, lifecycleTarget: keyboard, document: documentRoot, onReset });
     controller.start();
     controller.setEnabled(true);
 
@@ -103,11 +104,14 @@ describe('InputController', () => {
     expect(reset.defaultPrevented).toBe(true);
     expect(controller.consumeReset()).toBe(true);
     expect(controller.consumeReset()).toBe(false);
+    expect(onReset).toHaveBeenCalledTimes(1);
     keyboard.dispatchEvent(new KeyEventDouble('keydown', { code: 'KeyR', key: 'r' }));
     expect(controller.consumeReset()).toBe(false);
+    expect(onReset).toHaveBeenCalledTimes(1);
     keyboard.dispatchEvent(new KeyEventDouble('keyup', { code: 'KeyR', key: 'r' }));
     keyboard.dispatchEvent(new KeyEventDouble('keydown', { code: 'KeyR', key: 'r' }));
     expect(controller.consumeReset()).toBe(true);
+    expect(onReset).toHaveBeenCalledTimes(2);
 
     documentRoot.activeElement = interactive;
     const ignored = new KeyEventDouble('keydown', { key: 'ArrowLeft' });
@@ -173,6 +177,26 @@ describe('InputController', () => {
     const arrow = new KeyEventDouble('keydown', { key: 'ArrowUp' });
     keyboard.dispatchEvent(arrow);
     expect(arrow.defaultPrevented).toBe(false);
+    controller.dispose();
+  });
+
+  it('merges keyboard and external holds without cross-source release', () => {
+    const keyboard = new EventTarget();
+    const canvas = new EventTarget();
+    const documentRoot = new DocumentDouble(keyboard);
+    const controller = new InputController({ canvas, keyboardTarget: keyboard, lifecycleTarget: keyboard, document: documentRoot });
+    controller.start();
+    controller.setEnabled(true);
+    keyboard.dispatchEvent(new KeyEventDouble('keydown', { code: 'KeyW' }));
+    controller.setAction('move-forward', true);
+    controller.setAction('move-right', true);
+    expect(Math.hypot(movement(controller).forward, movement(controller).right)).toBeCloseTo(1, 12);
+    controller.setAction('move-forward', false);
+    expect(movement(controller).forward).toBeGreaterThan(0);
+    keyboard.dispatchEvent(new KeyEventDouble('keyup', { code: 'KeyW' }));
+    expect(movement(controller)).toEqual({ forward: 0, right: 1 });
+    controller.clear('viewport');
+    expect(movement(controller)).toEqual({ forward: 0, right: 0 });
     controller.dispose();
   });
 });

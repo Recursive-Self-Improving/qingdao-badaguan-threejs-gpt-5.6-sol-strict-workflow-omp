@@ -176,3 +176,122 @@ export class ViewportObserver {
     this.#window.visualViewport?.removeEventListener('scroll', this.#handleViewportChange);
   }
 }
+
+export type InteractionViewportChangeReason =
+  | 'resize'
+  | 'orientation'
+  | 'visual-viewport-resize'
+  | 'visual-viewport-scroll';
+
+export interface InteractionViewportMeasurement {
+  readonly viewportLeft: number;
+  readonly viewportTop: number;
+  readonly viewportWidth: number;
+  readonly viewportHeight: number;
+  readonly visibleLeft: number;
+  readonly visibleTop: number;
+  readonly visibleRight: number;
+  readonly visibleBottom: number;
+  readonly visibleWidth: number;
+  readonly visibleHeight: number;
+  readonly orientation: 'portrait' | 'landscape';
+}
+
+interface RectLike { readonly left: number; readonly top: number; readonly width: number; readonly height: number }
+interface VisualViewportLike extends EventTarget { readonly offsetLeft: number; readonly offsetTop: number; readonly width: number; readonly height: number }
+interface InteractionWindow extends EventTarget { readonly innerWidth: number; readonly innerHeight: number; readonly visualViewport?: VisualViewportLike | null }
+
+export function computeInteractionViewport(
+  containerRect: RectLike,
+  layoutViewport: Readonly<{ width: number; height: number }>,
+  visualViewport?: Readonly<{ offsetLeft: number; offsetTop: number; width: number; height: number }> | null,
+): InteractionViewportMeasurement {
+  const viewportLeft = Number.isFinite(visualViewport?.offsetLeft) ? visualViewport!.offsetLeft : 0;
+  const viewportTop = Number.isFinite(visualViewport?.offsetTop) ? visualViewport!.offsetTop : 0;
+  const viewportWidth = positiveFinite(visualViewport?.width ?? layoutViewport.width, positiveFinite(layoutViewport.width, 1));
+  const viewportHeight = positiveFinite(visualViewport?.height ?? layoutViewport.height, positiveFinite(layoutViewport.height, 1));
+  const containerWidth = Math.max(0, Number.isFinite(containerRect.width) ? containerRect.width : 0);
+  const containerHeight = Math.max(0, Number.isFinite(containerRect.height) ? containerRect.height : 0);
+  const left = Math.max(containerRect.left, viewportLeft);
+  const top = Math.max(containerRect.top, viewportTop);
+  const right = Math.min(containerRect.left + containerWidth, viewportLeft + viewportWidth);
+  const bottom = Math.min(containerRect.top + containerHeight, viewportTop + viewportHeight);
+  const visibleLeft = Math.max(0, left - containerRect.left);
+  const visibleTop = Math.max(0, top - containerRect.top);
+  const visibleRight = Math.max(visibleLeft, right - containerRect.left);
+  const visibleBottom = Math.max(visibleTop, bottom - containerRect.top);
+  return {
+    viewportLeft, viewportTop, viewportWidth, viewportHeight,
+    visibleLeft, visibleTop, visibleRight, visibleBottom,
+    visibleWidth: Math.max(0, visibleRight - visibleLeft),
+    visibleHeight: Math.max(0, visibleBottom - visibleTop),
+    orientation: viewportWidth >= viewportHeight ? 'landscape' : 'portrait',
+  };
+}
+
+export interface InteractionViewportObserverOptions {
+  readonly window?: InteractionWindow;
+  readonly onChange: (measurement: InteractionViewportMeasurement) => void;
+  readonly onInterrupt: (reason: InteractionViewportChangeReason) => void;
+}
+
+export class InteractionViewportObserver {
+  readonly #container: HTMLElement;
+  readonly #window: InteractionWindow;
+  readonly #onChange: (measurement: InteractionViewportMeasurement) => void;
+  readonly #onInterrupt: (reason: InteractionViewportChangeReason) => void;
+  #measurement: InteractionViewportMeasurement | null = null;
+  #started = false;
+
+  constructor(container: HTMLElement, options: InteractionViewportObserverOptions) {
+    this.#container = container;
+    this.#window = options.window ?? window;
+    this.#onChange = options.onChange;
+    this.#onInterrupt = options.onInterrupt;
+  }
+
+  get measurement(): InteractionViewportMeasurement | null {
+    return this.#measurement === null ? null : { ...this.#measurement };
+  }
+
+  start(): void {
+    if (this.#started) return;
+    this.#started = true;
+    this.#window.addEventListener('resize', this.#resize);
+    this.#window.addEventListener('orientationchange', this.#orientation);
+    this.#window.visualViewport?.addEventListener('resize', this.#visualResize);
+    this.#window.visualViewport?.addEventListener('scroll', this.#visualScroll);
+    this.update();
+  }
+
+  update(): InteractionViewportMeasurement | null {
+    if (!this.#started) return this.measurement;
+    const next = computeInteractionViewport(
+      this.#container.getBoundingClientRect(),
+      { width: this.#window.innerWidth, height: this.#window.innerHeight },
+      this.#window.visualViewport,
+    );
+    if (this.#measurement !== null && JSON.stringify(this.#measurement) === JSON.stringify(next)) return this.measurement;
+    this.#measurement = next;
+    this.#onChange({ ...next });
+    return { ...next };
+  }
+
+  dispose(): void {
+    if (!this.#started) return;
+    this.#started = false;
+    this.#window.removeEventListener('resize', this.#resize);
+    this.#window.removeEventListener('orientationchange', this.#orientation);
+    this.#window.visualViewport?.removeEventListener('resize', this.#visualResize);
+    this.#window.visualViewport?.removeEventListener('scroll', this.#visualScroll);
+  }
+
+  readonly #interrupt = (reason: InteractionViewportChangeReason): void => {
+    this.#onInterrupt(reason);
+    this.update();
+  };
+  readonly #resize = (): void => this.#interrupt('resize');
+  readonly #orientation = (): void => this.#interrupt('orientation');
+  readonly #visualResize = (): void => this.#interrupt('visual-viewport-resize');
+  readonly #visualScroll = (): void => this.#interrupt('visual-viewport-scroll');
+}

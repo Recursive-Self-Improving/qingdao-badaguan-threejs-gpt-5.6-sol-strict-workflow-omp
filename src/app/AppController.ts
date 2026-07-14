@@ -7,6 +7,7 @@ import {
 } from './appState';
 import { detectCapabilities, type CapabilityDetectionOptions } from '../platform/capabilities';
 import { detectPreferences, type PreferenceSnapshot } from '../platform/preferences';
+import { InteractionViewportObserver } from '../platform/viewport';
 import { createAppUI, type AppUI, type AppUIAction } from '../ui/AppUI';
 import { ThreeRuntime } from '../render/ThreeRuntime';
 import { APP_CONFIG } from './config';
@@ -14,6 +15,8 @@ import { DEFAULT_CAMERA_RADIUS } from '../exploration/navigation';
 import { InputController } from '../exploration/InputController';
 import { MovementController } from '../exploration/MovementController';
 import { PointerLockLook, type PointerLockOutcome } from '../exploration/PointerLockLook';
+import { DragLook } from '../exploration/DragLook';
+import { TouchLook } from '../exploration/TouchLook';
 import type { InputClearReason } from '../exploration/types';
 
 type DevelopmentScenario =
@@ -72,8 +75,13 @@ export class AppController {
   private runtime: ThreeRuntime | null = null;
   private inputController: InputController | null = null;
   private pointerLockLook: PointerLockLook | null = null;
+  private dragLook: DragLook | null = null;
+  private touchLook: TouchLook | null = null;
+  private interactionViewportObserver: InteractionViewportObserver | null = null;
   private movementController: MovementController | null = null;
   private destroyed = false;
+  private hasConfirmedPointerLock = false;
+  private pointerLockTerminalFallback = false;
   private developmentRuntimeCleanup: (() => void) | null = null;
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || event.defaultPrevented) {
@@ -96,11 +104,17 @@ export class AppController {
     this.ui = createAppUI({
       preferences: this.preferences,
       onAction: (action) => this.handleUIAction(action),
+      onInputAction: (action, pressed) => this.inputController?.setAction(action, pressed),
     });
   }
 
   start(): void {
     this.render();
+    this.interactionViewportObserver = new InteractionViewportObserver(this.ui.interactionViewportElement, {
+      onChange: (measurement) => this.ui.setInteractionViewport(measurement),
+      onInterrupt: () => this.handleInteractionViewportInterrupt(),
+    });
+    this.interactionViewportObserver.start();
     window.addEventListener('keydown', this.onKeyDown);
     if (import.meta.env.DEV) this.installDevelopmentRuntimeSurface();
     this.dispatch({ type: 'BOOT' });
@@ -125,12 +139,18 @@ export class AppController {
     cleanup(() => window.removeEventListener('keydown', this.onKeyDown));
     cleanup(() => this.developmentRuntimeCleanup?.());
     this.developmentRuntimeCleanup = null;
+    cleanup(() => this.interactionViewportObserver?.dispose());
+    this.interactionViewportObserver = null;
     cleanup(() => this.disposeRuntime());
     cleanup(() => this.ui.destroy());
     if (errors.length !== 0) throw new AggregateError(errors, 'AppController destruction failed.');
   }
 
   private handleUIAction(action: AppUIAction): void {
+    if (action.type === 'RESET') {
+      this.resetExploration();
+      return;
+    }
     if (action.type === 'RETRY') {
       const retry = this.dispatch(action);
       if (retry) {
@@ -143,7 +163,15 @@ export class AppController {
     const transitioned = this.dispatch(action);
     if (!transitioned) return;
     if (action.type === 'START_EXPLORING' || action.type === 'RESUME') {
-      if (this.scenario === null && this.hasFinePointer()) this.pointerLockLook?.requestLock();
+      this.ui.focusCanvas();
+      this.inputController?.setIntentionalFocus(true);
+      const mayRequestInitialLock = action.type === 'START_EXPLORING';
+      const mayReacquireOwnedLock = action.type === 'RESUME'
+        && this.hasConfirmedPointerLock
+        && !this.pointerLockTerminalFallback;
+      if (this.scenario === null && this.hasFinePointer() && (mayRequestInitialLock || mayReacquireOwnedLock)) {
+        this.pointerLockLook?.requestLock();
+      }
       this.applyExplorationScenario();
     }
   }
@@ -329,6 +357,8 @@ export class AppController {
     let runtime: ThreeRuntime | null = null;
     let input: InputController | null = null;
     let look: PointerLockLook | null = null;
+    let drag: DragLook | null = null;
+    let touch: TouchLook | null = null;
     let movement: MovementController | null = null;
     try {
       runtime = new ThreeRuntime(canvas, {
@@ -343,6 +373,7 @@ export class AppController {
       input = new InputController({
         canvas,
         onClear: (reason) => this.handleInputClear(reason),
+        onReset: () => this.ui.announceReset(),
       });
       movement = new MovementController({
         camera: runtime.camera,
@@ -362,12 +393,26 @@ export class AppController {
         onLook: (delta) => this.movementController?.applyLook(delta),
         onOutcome: (outcome) => this.handlePointerLockOutcome(outcome),
       });
+      drag = new DragLook({
+        target: canvas,
+        sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel,
+        onLook: (delta) => this.movementController?.applyLook(delta),
+      });
+      touch = new TouchLook({
+        target: canvas,
+        sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel,
+        onLook: (delta) => this.movementController?.applyLook(delta),
+      });
       this.runtime = runtime;
       this.inputController = input;
       this.movementController = movement;
       this.pointerLockLook = look;
+      this.dragLook = drag;
+      this.touchLook = touch;
       input.start();
       look.start();
+      drag.start();
+      touch.start();
       this.syncExplorationControllers();
       return true;
     } catch {
@@ -375,6 +420,10 @@ export class AppController {
       this.inputController = null;
       this.movementController = null;
       this.pointerLockLook = null;
+      this.dragLook = null;
+      this.touchLook = null;
+      drag?.dispose();
+      touch?.dispose();
       look?.dispose();
       input?.dispose();
       movement?.setActive(false);
@@ -389,32 +438,48 @@ export class AppController {
     const input = this.inputController;
     const movement = this.movementController;
     const look = this.pointerLockLook;
+    const drag = this.dragLook;
+    const touch = this.touchLook;
     this.runtime = null;
     this.inputController = null;
     this.movementController = null;
     this.pointerLockLook = null;
+    this.dragLook = null;
+    this.touchLook = null;
+    this.hasConfirmedPointerLock = false;
+    this.pointerLockTerminalFallback = false;
     look?.releaseLock();
     look?.dispose();
+    drag?.dispose();
+    touch?.dispose();
     input?.dispose();
     movement?.setActive(false);
     runtime?.dispose();
   }
 
   private dispatch(event: AppEvent): boolean {
+    const wasExploring = getAppStateInvariant(this.state).isExploring;
     const transition = reduceAppState(this.state, event);
     if (!transition.transitioned) return false;
     this.state = transition.state;
     this.syncExplorationControllers();
     this.ui.render({ state: transition.state, invariant: transition.invariant });
+    if (wasExploring && (transition.state.kind === 'paused' || (transition.state.kind === 'degraded' && transition.state.underlying?.kind === 'paused'))) this.ui.focusResume();
     return true;
   }
 
   private syncExplorationControllers(): void {
-    const exploring = getAppStateInvariant(this.state).isExploring;
+    const invariant = getAppStateInvariant(this.state);
+    const exploring = invariant.isExploring;
+    const fallbackActive = exploring && invariant.control === 'drag' && invariant.panel === 'none';
     this.inputController?.setEnabled(exploring);
+    this.inputController?.setIntentionalFocus(exploring && invariant.panel === 'none');
     this.movementController?.setActive(exploring);
     this.pointerLockLook?.setEnabled(exploring);
+    this.dragLook?.setEnabled(fallbackActive);
+    this.touchLook?.setEnabled(fallbackActive);
     if (!exploring) this.pointerLockLook?.releaseLock();
+    if (!fallbackActive) this.ui.clearTouchControls();
   }
 
   private handleInputClear(reason: InputClearReason): void {
@@ -427,6 +492,8 @@ export class AppController {
   private handlePointerLockOutcome(outcome: PointerLockOutcome): void {
     switch (outcome) {
       case 'locked':
+        this.hasConfirmedPointerLock = true;
+        this.pointerLockTerminalFallback = false;
         this.dispatch({ type: 'POINTER_LOCK_CONFIRMED' });
         return;
       case 'unlocked':
@@ -435,15 +502,34 @@ export class AppController {
         this.dispatch({ type: 'PAUSE' });
         return;
       case 'denied':
+        this.pointerLockTerminalFallback = true;
         this.inputController?.clear('lock-exit');
         this.dispatch({ type: 'POINTER_LOCK_DENIED' });
         return;
       case 'error':
+        this.pointerLockTerminalFallback = true;
         this.inputController?.clear('lock-exit');
         this.dispatch({ type: 'POINTER_LOCK_ERROR' });
     }
   }
 
+  private handleInteractionViewportInterrupt(): void {
+    this.inputController?.clear('viewport');
+    this.dragLook?.cancel();
+    this.touchLook?.cancel();
+    this.ui.clearTouchControls();
+    this.movementController?.invalidateResumeDelta();
+  }
+
+  private resetExploration(): void {
+    this.inputController?.clear('viewport');
+    this.dragLook?.cancel();
+    this.touchLook?.cancel();
+    this.ui.clearTouchControls();
+    this.movementController?.reset();
+    this.movementController?.invalidateResumeDelta();
+    this.ui.announceReset();
+  }
   private hasFinePointer(): boolean {
     return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   }

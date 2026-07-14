@@ -161,7 +161,8 @@ button:disabled {
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100%;
   height: 100svh;
-  min-height: 32rem;
+  height: 100dvh;
+  min-height: 0;
   padding: var(--edge-top) var(--edge-right) var(--edge-bottom) var(--edge-inline);
   overflow: hidden;
 }
@@ -262,6 +263,29 @@ button:disabled {
   border: 0;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+#app-canvas[data-look-active="true"] {
+  touch-action: pinch-zoom;
+  overscroll-behavior: none;
+  cursor: grab;
+}
+
+.experience:has(#app-canvas:focus-visible) {
+  outline: var(--focus-width) solid var(--color-focus);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-focus-shadow), var(--shadow-elevated);
+}
+
 .interface-layer {
   position: absolute;
   inset: 0;
@@ -272,6 +296,41 @@ button:disabled {
 .drawer-panel,
 .controls-region {
   pointer-events: auto;
+}
+
+.touch-controls {
+  --touch-control-size: max(var(--control-min-size), 2.75rem);
+  --touch-control-gap: var(--space-1);
+  position: absolute;
+  z-index: var(--layer-controls);
+  left: calc(var(--interaction-visible-left, 0px) + max(var(--space-3), var(--safe-area-left, env(safe-area-inset-left))));
+  bottom: calc(100% - var(--interaction-visible-bottom, 100%) + max(var(--space-3), var(--safe-area-bottom, env(safe-area-inset-bottom))));
+  display: grid;
+  grid-template-areas: ". forward ." "left . right" ". backward .";
+  grid-template-columns: repeat(3, var(--touch-control-size));
+  grid-template-rows: repeat(3, var(--touch-control-size));
+  gap: var(--touch-control-gap);
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.touch-controls[hidden] { display: none; }
+.touch-control-button { width: var(--touch-control-size); min-width: var(--control-min-size); height: var(--touch-control-size); padding: 0; color: var(--color-text); background: var(--color-panel-raised); touch-action: none; font-size: 1.25rem; font-weight: 700; }
+.touch-control-button[data-input-action="move-forward"] { grid-area: forward; }
+.touch-control-button[data-input-action="move-left"] { grid-area: left; }
+.touch-control-button[data-input-action="move-right"] { grid-area: right; }
+.touch-control-button[data-input-action="move-backward"] { grid-area: backward; }
+.touch-control-button[data-active="true"] { color: var(--color-accent-ink); border-color: var(--color-accent-strong); background: var(--color-accent); }
+
+.experience:has(.touch-controls:not([hidden])) .experience-panel[data-compact="true"] {
+  top: calc(var(--interaction-visible-top, 0px) + var(--space-3) + var(--control-min-size) + var(--space-2));
+  bottom: auto;
+  left: calc(var(--interaction-visible-left, 0px) + var(--space-3));
+  width: min(20rem, calc(var(--interaction-visible-width, 100%) - var(--space-6)));
+  max-height: min(9rem, calc(var(--interaction-visible-height, 100%) - 12rem));
 }
 
 .experience-panel {
@@ -290,13 +349,43 @@ button:disabled {
   scrollbar-gutter: stable;
 }
 
+.experience-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.experience-panel .primary-actions {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  order: -1;
+  flex: 0 0 auto;
+  margin: 0 0 var(--space-3);
+  padding-block: var(--space-1);
+  background: var(--color-panel);
+}
+
 .experience:has(.controls-region:empty) .experience-panel {
   max-height: calc(100% - var(--space-7));
 }
 
 .experience-panel[data-compact="true"] {
-  width: min(var(--content-narrow), calc(100% - var(--space-7)));
-  padding: var(--space-4);
+  width: min(18rem, calc(100% - var(--space-7)));
+  max-height: 8rem;
+  padding: var(--space-3);
+}
+
+.experience-panel[data-compact="true"] .eyebrow,
+.experience-panel[data-compact="true"] h2 {
+  display: none;
+}
+
+.experience-panel[data-compact="true"] .state-detail {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .experience-panel[data-tone="caution"] {
@@ -473,6 +562,11 @@ button:disabled {
   justify-content: flex-end;
   gap: var(--space-2);
   max-width: calc(100% - var(--space-8));
+}
+
+.experience .controls-region {
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))));
+  right: calc(100% - var(--interaction-visible-right, 100%) + max(var(--space-3), var(--safe-area-right, env(safe-area-inset-right))));
 }
 
 .utility-button[aria-expanded="true"] {
@@ -671,6 +765,23 @@ button:disabled {
   pointer-events: none;
 }
 
+.experience .status {
+  top: calc(var(--interaction-visible-top, 0px) + var(--space-3));
+  left: calc(var(--interaction-visible-left, 0px) + var(--space-3));
+  white-space: normal;
+  text-overflow: clip;
+}
+
+.app-shell:is([data-app-state="exploring"], [data-app-state="paused"]) .status,
+.app-shell[data-app-state="degraded"] .status {
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))) + var(--control-min-size) + var(--space-2));
+  right: calc(100% - var(--interaction-visible-right, 100%) + max(var(--space-3), var(--safe-area-right, env(safe-area-inset-right))));
+  left: auto;
+  max-width: min(15rem, calc(var(--interaction-visible-width, 100%) - var(--space-6)));
+  max-height: 3.75rem;
+  overflow: hidden;
+}
+
 .status[hidden] {
   display: none;
 }
@@ -793,13 +904,7 @@ html:has(.no-script) #app-status {
   }
 
   .status {
-    width: var(--visually-hidden-size);
-    height: var(--visually-hidden-size);
-    margin: calc(-1 * var(--visually-hidden-size));
-    padding: 0;
-    overflow: hidden;
-    border: 0;
-    clip-path: inset(50%);
+    max-width: calc(100% - var(--space-6));
   }
 
   .experience-panel h2 {
@@ -853,6 +958,92 @@ html:has(.no-script) #app-status {
   }
 }
 
+@media (max-height: 30rem) {
+  .site-header,
+  .site-footer { min-height: 0; padding-block: var(--space-1); }
+  .experience { margin-block: var(--space-1); }
+  .touch-controls[data-layout="landscape"] {
+    grid-template-areas: "left forward right" ". backward .";
+    grid-template-rows: repeat(2, var(--touch-control-size));
+  }
+  .experience-panel:not([data-compact="true"]) {
+    bottom: var(--space-2);
+    max-height: calc(100% - var(--space-4));
+    padding: var(--space-3);
+  }
+  .experience-panel[data-compact="true"] {
+    bottom: var(--space-2);
+    width: min(16rem, calc(100% - var(--space-6)));
+    max-height: 7rem;
+  }
+}
+
+@media (max-width: 22rem) {
+  .controls-region { max-width: calc(100% - var(--space-4)); }
+  .drawer-panel { inset: var(--space-2); padding: var(--space-3); }
+  .touch-controls { grid-template-areas: "forward right" "left backward"; grid-template-columns: repeat(2, var(--touch-control-size)); grid-template-rows: repeat(2, var(--touch-control-size)); }
+}
+
+/* Interaction HUD slots: utilities, status, and primary action never share a band. */
+.experience .controls-region {
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))));
+}
+
+.experience .status {
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))) + var(--control-min-size) + var(--space-3));
+  right: auto;
+  left: calc(var(--interaction-visible-left, 0px) + max(var(--space-3), var(--safe-area-left, env(safe-area-inset-left))));
+  max-width: min(18rem, calc(var(--interaction-visible-width, 100%) - var(--space-6)));
+  max-height: 3rem;
+  overflow: hidden;
+}
+
+.experience-panel:not([data-compact="true"]) {
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))) + var(--control-min-size) + 3rem + var(--space-6));
+  right: auto;
+  bottom: calc(100% - var(--interaction-visible-bottom, 100%) + var(--space-3));
+  max-height: none;
+}
+
+.experience-panel[data-compact="true"] {
+  top: auto;
+  right: auto;
+  bottom: calc(100% - var(--interaction-visible-bottom, 100%) + max(var(--space-3), var(--safe-area-bottom, env(safe-area-inset-bottom))));
+  left: calc(var(--interaction-visible-left, 0px) + max(var(--space-3), var(--safe-area-left, env(safe-area-inset-left))));
+  width: min(16rem, calc(var(--interaction-visible-width, 100%) - var(--space-6)));
+  max-height: 5rem;
+}
+
+.experience:has(.touch-controls:not([hidden])) .experience-panel[data-compact="true"] {
+  top: auto;
+  right: calc(100% - var(--interaction-visible-right, 100%) + max(var(--space-3), var(--safe-area-right, env(safe-area-inset-right))));
+  bottom: calc(100% - var(--interaction-visible-bottom, 100%) + max(var(--space-3), var(--safe-area-bottom, env(safe-area-inset-bottom))));
+  left: auto;
+  width: min(12rem, calc(var(--interaction-visible-width, 100%) - 10rem));
+  max-height: 5rem;
+}
+
+.experience-panel .primary-actions {
+  min-height: calc(var(--control-min-size) + (2 * var(--space-1)));
+  padding: var(--space-1);
+}
+
+@media (max-width: 40rem) {
+  .experience .status {
+    max-width: min(15rem, calc(var(--interaction-visible-width, 100%) - var(--space-6)));
+  }
+  .experience-panel:not([data-compact="true"]) {
+    width: calc(var(--interaction-visible-width, 100%) - var(--space-6));
+  }
+}
+
+@media (max-height: 30rem) {
+  .experience-panel:not([data-compact="true"]) {
+    top: calc(var(--interaction-visible-top, 0px) + var(--control-min-size) + 4.25rem);
+    bottom: calc(100% - var(--interaction-visible-bottom, 100%) + var(--space-2));
+    max-height: none;
+  }
+}
 @media (hover: none) {
   .action-button,
   .utility-button,
