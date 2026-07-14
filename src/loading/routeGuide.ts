@@ -1,6 +1,6 @@
 import { DISTRICT_DATA } from '../world/districtData';
 
-export const ROUTE_GUIDE_URL = '/assets/route-guide.v1.json';
+export const ROUTE_GUIDE_URL = `${import.meta.env.BASE_URL}assets/route-guide.v1.json`;
 export const ROUTE_GUIDE_ASSET_ID = 'route-guide';
 export const ROUTE_GUIDE_RECIPE_ID = 'badaguan-district-procedural';
 

@@ -28,3 +28,4 @@
 - Representative profiling must disable periodic metrics serialization, observe quality through lightweight state, move the camera without extra renders, and measure rAF duration from one clock origin.
 - Record the actual renderer and acceleration path, and keep performance budgets honest: SwiftShader failure is an environment limit, not hardware evidence or a reason to weaken thresholds.
 - Pose reset breaks contiguous Auto sampling; give user-reset live feedback a short priority lease and queue the latest Auto announcement behind it.
+- Keep Vite's relative `base` and derive runtime-loaded public assets from `import.meta.env.BASE_URL`; absolute `/assets/...` URLs break GitHub Pages project-site deployments.
