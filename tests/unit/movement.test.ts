@@ -180,4 +180,21 @@ describe('MovementController', () => {
     expect(camera.position.z).toBeGreaterThanOrEqual(edge);
     expect(Number.isFinite(camera.position.y)).toBe(true);
   });
+
+  it('restores a finite grounded YXZ pose and rejects invalid recovery data', () => {
+    const { controller, camera, input } = createController({ yaw: 0 });
+    controller.restorePose({ x: 18, y: 999, z: -28, yaw: 1.25, pitch: Math.PI });
+    expect(camera.position.x).toBeCloseTo(18, 6);
+    expect(camera.position.z).toBeCloseTo(-28, 6);
+    expect(camera.position.y).toBeCloseTo(realNavigation.sampleGroundHeight(camera.position.x, camera.position.z) + APP_CONFIG.camera.eyeHeight, 6);
+    expect(camera.rotation.y).toBeCloseTo(1.25, 6);
+    expect(camera.rotation.x).toBeCloseTo(APP_CONFIG.controls.maxPitchRadians, 6);
+    expect(camera.rotation.z).toBe(0);
+    expect(camera.rotation.order).toBe('YXZ');
+    input.axes.forward = 1;
+    const restoredZ = camera.position.z;
+    controller.update(1);
+    expect(camera.position.z).toBe(restoredZ);
+    expect(() => controller.restorePose({ x: Number.NaN, y: 0, z: 0, yaw: 0, pitch: 0 })).toThrow(/finite/i);
+  });
 });
