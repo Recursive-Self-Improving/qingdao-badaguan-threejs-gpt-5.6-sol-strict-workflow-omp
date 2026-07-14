@@ -16,6 +16,7 @@ export type InputClearReason =
   | 'orientation'
   | 'viewport'
   | 'lock-exit'
+  | 'context-lost'
   | 'dispose';
 
 export interface MovementAxes {

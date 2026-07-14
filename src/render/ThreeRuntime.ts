@@ -301,6 +301,7 @@ export class ThreeRuntime {
   private visibilityListenerInstalled = false;
   private countedAsCreated = false;
   private countedAsDisposed = false;
+  private readonly suspensionReasons = new Set<'context-lost'>();
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -376,6 +377,27 @@ export class ThreeRuntime {
 
   get worldBuildResult(): WorldBuildResult | null {
     return this.activeWorld;
+  }
+
+  get currentLandscapeSettings(): LandscapeSettings {
+    return this.landscapeSettings;
+  }
+
+  suspend(reason: 'context-lost'): void {
+    if (this.disposed || this.suspensionReasons.has(reason)) return;
+    this.suspensionReasons.add(reason);
+    this.syncAnimationLoop();
+  }
+
+  resume(reason: 'context-lost'): void {
+    if (this.disposed || !this.suspensionReasons.delete(reason)) return;
+    this.syncAnimationLoop();
+  }
+
+  validateFrame(): void {
+    if (this.disposed) throw new Error('Cannot validate a disposed runtime.');
+    this.renderer.render(this.scene, this.camera);
+    this.renderCount += 1;
   }
 
   get metrics(): ThreeRuntimeMetrics {
@@ -923,7 +945,7 @@ export class ThreeRuntime {
 
   private syncAnimationLoop(): void {
     if (this.disposed) return;
-    const shouldRun = !document.hidden;
+    const shouldRun = !document.hidden && this.suspensionReasons.size === 0;
     this.clock.setPaused(!shouldRun);
     this.renderer.setAnimationLoop(shouldRun ? this.animate : null);
     this.loopRunning = shouldRun;

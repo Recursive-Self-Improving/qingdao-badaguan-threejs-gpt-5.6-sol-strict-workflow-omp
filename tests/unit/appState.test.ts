@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   INITIAL_APP_STATE,
   getAppStateInvariant,
+  normalizeRestorableProjection,
   reduceAppState,
   type AppEvent,
   type AppOperationalProjection,
@@ -14,21 +15,38 @@ function transition(state: AppState, event: AppEvent): AppState {
   return reduceAppState(state, event).state;
 }
 
+const OPTIONAL_FAILURE = { assetId: 'route-guide', message: 'Unavailable.', status: 'failed' as const, classification: 'http' as const };
+
 const ALL_STATES: readonly AppState[] = [
   { kind: 'boot' },
   { kind: 'loading' },
+  { kind: 'loading', attempt: 7, phase: 'preparing', progress: { kind: 'indeterminate', phase: 'preparing', label: 'Preparing' }, canCancel: true },
   { kind: 'onboarding' },
   { kind: 'exploring', control: 'locked' },
   { kind: 'exploring', control: 'drag' },
   { kind: 'paused', resumeControl: 'locked' },
   { kind: 'degraded', reason: 'Reduced detail.', underlying: null },
+  { kind: 'degraded', failures: [OPTIONAL_FAILURE], underlying: { kind: 'onboarding' } },
+  { kind: 'degraded', failures: [{ ...OPTIONAL_FAILURE, status: 'retrying' }], underlying: { kind: 'paused', resumeControl: 'drag' } },
   { kind: 'context-lost' },
+  { kind: 'context-lost', phase: 'waiting', restore: { kind: 'exploring', control: 'locked' } },
+  { kind: 'context-lost', phase: 'rebuilding', restore: { kind: 'paused', resumeControl: 'drag' } },
   { kind: 'unsupported', reason: 'WebGL2 unavailable.' },
   { kind: 'fatal', reason: 'Unexpected failure.' },
+  { kind: 'load-cancelled', reason: 'Cancelled.' },
+  { kind: 'recovery-failed', reason: 'Recovery failed.' },
+  { kind: 'static', reason: 'recovery-failed' },
 ];
 
 const ALL_EVENTS: readonly AppEvent[] = [
   { type: 'BOOT' },
+  { type: 'LOAD_PROGRESS', attempt: 7, progress: { kind: 'items', phase: 'assets', loaded: 0, total: 1, currentLabel: 'Route guide' }, canCancel: true },
+  { type: 'LOAD_ESSENTIAL_READY', attempt: 7 },
+  { type: 'LOAD_OPTIONAL_FAILED', attempt: 7, failure: OPTIONAL_FAILURE },
+  { type: 'RETRY_OPTIONAL', assetId: 'route-guide' },
+  { type: 'LOAD_OPTIONAL_RECOVERED', assetId: 'route-guide' },
+  { type: 'LOAD_FAILED', attempt: 7, reason: 'Required failed.' },
+  { type: 'LOAD_CANCELLED', attempt: 7 },
   { type: 'CAPABILITY_SUPPORTED' },
   { type: 'CAPABILITY_UNSUPPORTED', reason: 'WebGL2 unavailable.' },
   { type: 'START_EXPLORING' },
@@ -40,16 +58,20 @@ const ALL_EVENTS: readonly AppEvent[] = [
   { type: 'RESUME' },
   { type: 'DEGRADED', reason: 'Reduced detail.' },
   { type: 'CONTEXT_LOST' },
+  { type: 'CONTEXT_RECOVERY_STARTED' },
+  { type: 'CONTEXT_RECOVERY_FAILED', reason: 'Recovery failed.' },
   { type: 'CONTEXT_RESTORED' },
   { type: 'FATAL', reason: 'Unexpected failure.' },
   { type: 'RETRY' },
+  { type: 'RETURN_TO_STATIC' },
+  { type: 'RELOAD' },
   { type: 'OPEN_PANEL', panel: 'help' },
   { type: 'CLOSE_PANEL' },
 ];
 
 function expectedNextState(state: AppState, event: AppEvent): AppState | null {
   if (event.type === 'OPEN_PANEL') {
-    if (state.kind === 'boot' || state.kind === 'loading') return null;
+    if (state.kind === 'boot' || state.kind === 'loading' || state.kind === 'context-lost') return null;
     if (state.kind === 'exploring') return { kind: 'paused', resumeControl: state.control, panel: event.panel };
     if (state.kind === 'degraded' && state.underlying?.kind === 'exploring') {
       return { ...state, panel: event.panel, underlying: { kind: 'paused', resumeControl: state.underlying.control } };
@@ -58,7 +80,24 @@ function expectedNextState(state: AppState, event: AppEvent): AppState | null {
   }
   if (event.type === 'CLOSE_PANEL') return state.panel === undefined || state.panel === 'none' ? null : { ...state, panel: 'none' };
   if (event.type === 'FATAL') return state.kind === 'fatal' ? null : { kind: 'fatal', reason: event.reason };
-  if (event.type === 'CONTEXT_LOST') return ['loading', 'onboarding', 'exploring', 'paused', 'degraded'].includes(state.kind) ? { kind: 'context-lost' } : null;
+  if (event.type === 'LOAD_FAILED') return state.kind === 'loading' && (event.attempt === undefined || state.attempt === event.attempt) ? { kind: 'fatal', reason: event.reason } : null;
+  if (event.type === 'LOAD_OPTIONAL_FAILED') {
+    const underlying = state.kind === 'degraded' ? state.underlying : state.kind === 'onboarding' || state.kind === 'exploring' || state.kind === 'paused' ? state : null;
+    if (underlying === null) return null;
+    const current = state.kind === 'degraded' ? state.failures ?? [{ assetId: 'legacy', message: state.reason ?? '', status: 'failed' as const, classification: 'runtime' as const }] : [];
+    return { kind: 'degraded', failures: [...current.filter(({ assetId }) => assetId !== event.failure.assetId), event.failure], underlying, panel: state.panel };
+  }
+  if (event.type === 'RETURN_TO_STATIC') {
+    const reason = state.kind === 'load-cancelled' ? 'cancelled' : state.kind === 'unsupported' ? 'unsupported' : state.kind === 'recovery-failed' ? 'recovery-failed' : state.kind === 'fatal' || state.kind === 'context-lost' ? 'fatal' : null;
+    return reason === null ? null : { kind: 'static', reason };
+  }
+  if (event.type === 'CONTEXT_RECOVERY_FAILED') return state.kind === 'context-lost' ? { kind: 'recovery-failed', reason: event.reason } : null;
+  if (event.type === 'CONTEXT_LOST') {
+    if (state.kind === 'context-lost') return { ...state, phase: 'waiting' };
+    if (state.kind === 'onboarding' || state.kind === 'exploring' || state.kind === 'paused') return { kind: 'context-lost', phase: 'waiting', restore: state };
+    if (state.kind === 'degraded' && state.underlying !== null) return { kind: 'context-lost', phase: 'waiting', restore: { kind: 'degraded', failures: state.failures ?? [{ assetId: 'legacy', message: state.reason ?? '', status: 'failed', classification: 'runtime' }], underlying: state.underlying } };
+    return null;
+  }
   if (event.type === 'DEGRADED') {
     if (!['loading', 'onboarding', 'exploring', 'paused'].includes(state.kind)) return null;
     return { kind: 'degraded', reason: event.reason, underlying: state.kind === 'onboarding' || state.kind === 'exploring' || state.kind === 'paused' ? state : null };
@@ -66,8 +105,11 @@ function expectedNextState(state: AppState, event: AppEvent): AppState | null {
   switch (state.kind) {
     case 'boot': return event.type === 'BOOT' ? { kind: 'loading' } : null;
     case 'loading':
-      if (event.type === 'CAPABILITY_SUPPORTED') return { kind: 'onboarding' };
-      return event.type === 'CAPABILITY_UNSUPPORTED' ? { kind: 'unsupported', reason: event.reason } : null;
+      if (event.type === 'LOAD_PROGRESS' && state.attempt === event.attempt) return { ...state, phase: event.progress.kind === 'items' ? 'items' : event.progress.phase, progress: event.progress, canCancel: event.canCancel };
+      if ((event.type === 'LOAD_ESSENTIAL_READY' && state.attempt === event.attempt) || event.type === 'CAPABILITY_SUPPORTED') return { kind: 'onboarding' };
+      if (event.type === 'CAPABILITY_UNSUPPORTED') return { kind: 'unsupported', reason: event.reason };
+      if (event.type === 'LOAD_CANCELLED' && (event.attempt === undefined || state.attempt === event.attempt)) return { kind: 'load-cancelled', reason: 'Loading was cancelled. No background loading will continue.' };
+      return null;
     case 'onboarding': return event.type === 'START_EXPLORING' ? { kind: 'exploring', control: 'drag', fallbackReason: 'initial' } : null;
     case 'exploring': {
       if (event.type === 'POINTER_LOCK_CONFIRMED') return state.control === 'locked' ? null : { kind: 'exploring', control: 'locked' };
@@ -80,19 +122,33 @@ function expectedNextState(state: AppState, event: AppEvent): AppState | null {
       if (event.type === 'POINTER_UNLOCKED' || event.type === 'POINTER_LOCK_DENIED' || event.type === 'POINTER_LOCK_ERROR') return state.resumeControl === 'drag' ? null : { kind: 'paused', resumeControl: 'drag' };
       return null;
     case 'degraded': {
-      if (event.type === 'RETRY') return { kind: 'loading' };
+      const current = state.failures ?? (state.reason === undefined ? [] : [{ assetId: 'legacy', message: state.reason, status: 'failed' as const, classification: 'runtime' as const }]);
+      if (event.type === 'RETRY' && state.failures === undefined) return { kind: 'loading' };
+      if (event.type === 'RETRY_OPTIONAL') {
+        const updated = current.map((failure) => event.assetId === undefined || failure.assetId === event.assetId ? { ...failure, status: 'retrying' as const } : failure);
+        return updated.some((failure, index) => failure !== current[index]) ? { ...state, failures: updated, reason: undefined } : null;
+      }
+      if (event.type === 'LOAD_OPTIONAL_RECOVERED') {
+        const remaining = current.filter(({ assetId }) => assetId !== event.assetId);
+        return remaining.length === current.length ? null : remaining.length === 0 ? { ...state.underlying!, panel: state.panel } : { ...state, failures: remaining, reason: undefined };
+      }
       if (state.underlying?.kind === 'onboarding' && event.type === 'START_EXPLORING') return { ...state, underlying: { kind: 'exploring', control: 'drag', fallbackReason: 'initial' } };
       if (state.underlying?.kind === 'exploring' || state.underlying?.kind === 'paused') {
         const projected = expectedNextState(state.underlying, event);
-        return projected === null
-          ? null
-          : { ...state, underlying: projected as AppOperationalProjection };
+        return projected === null ? null : { ...state, underlying: projected as AppOperationalProjection };
       }
       return null;
     }
-    case 'context-lost': return event.type === 'RETRY' || event.type === 'CONTEXT_RESTORED' ? { kind: 'loading' } : null;
+    case 'context-lost':
+      if (event.type === 'CONTEXT_RECOVERY_STARTED' && state.phase === 'waiting') return { ...state, phase: 'rebuilding' };
+      if (event.type === 'CONTEXT_RESTORED' && state.phase === 'rebuilding') return event.projection ?? state.restore ?? { kind: 'loading' };
+      if (event.type === 'CONTEXT_RESTORED' && state.phase === undefined) return { kind: 'loading' };
+      return event.type === 'RETRY' ? { kind: 'loading' } : null;
     case 'unsupported':
     case 'fatal': return event.type === 'RETRY' ? { kind: 'loading' } : null;
+    case 'load-cancelled':
+    case 'recovery-failed':
+    case 'static': return event.type === 'RETRY' ? { kind: 'loading' } : null;
   }
 }
 
@@ -218,7 +274,7 @@ describe('app state contract', () => {
       transition({ kind: 'exploring', control: 'locked' }, { type: 'FATAL', reason: 'boom' }),
     ).toEqual({ kind: 'fatal', reason: 'boom' });
     expect(transition({ kind: 'onboarding' }, { type: 'CONTEXT_LOST' })).toEqual({
-      kind: 'context-lost',
+      kind: 'context-lost', phase: 'waiting', restore: { kind: 'onboarding' },
     });
     expect(
       transition({ kind: 'paused', resumeControl: 'locked' }, { type: 'DEGRADED', reason: 'low' }),
@@ -328,6 +384,17 @@ describe('app state contract', () => {
       underlying: { kind: 'paused', resumeControl: 'locked' },
     });
     expect(degradedHelp.invariant.isExploring).toBe(false);
+  });
+
+  it('normalizes restored locked intent to honest drag control', () => {
+    expect(normalizeRestorableProjection({ kind: 'exploring', control: 'locked' })).toEqual({ kind: 'exploring', control: 'drag', fallbackReason: 'unlocked' });
+    expect(normalizeRestorableProjection({ kind: 'degraded', failures: [], underlying: { kind: 'paused', resumeControl: 'locked' } })).toEqual({ kind: 'degraded', failures: [], underlying: { kind: 'paused', resumeControl: 'drag' } });
+  });
+
+  it('restarts waiting for a newer loss while rebuilding without dropping the snapshot', () => {
+    const restore = { kind: 'exploring', control: 'drag' } as const;
+    const rebuilding: AppState = { kind: 'context-lost', phase: 'rebuilding', restore };
+    expect(transition(rebuilding, { type: 'CONTEXT_LOST' })).toEqual({ kind: 'context-lost', phase: 'waiting', restore });
   });
 
 });

@@ -160,10 +160,18 @@
             <p id="app-detail" class="state-detail">
               JavaScript starts the interactive landscape when browser graphics support is available.
             </p>
+            <div id="app-progress-region" class="progress-region" hidden>
+              <progress id="app-progress" aria-labelledby="app-progress-label"></progress>
+              <p id="app-progress-label" class="progress-label"></p>
+            </div>
             <div id="app-actions" class="primary-actions" aria-label="Experience actions"></div>
             <p id="app-notice" class="state-notice" hidden></p>
             <ul id="app-control-guide" class="control-guide" aria-label="Controls" hidden></ul>
           </section>
+          <aside id="app-degraded-notice" class="degraded-notice" data-testid="degraded-notice" hidden>
+            <p id="app-degraded-text">Route guide unavailable. The 3D scene and controls still work.</p>
+            <div id="app-degraded-actions" class="degraded-actions"></div>
+          </aside>
 
           <section
             id="app-help"

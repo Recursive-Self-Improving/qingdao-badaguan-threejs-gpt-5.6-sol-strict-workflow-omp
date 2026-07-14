@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "recipeId": "badaguan-district-procedural",
+  "stops": [
+    { "anchorId": "spawn", "title": "Garden-road threshold", "summary": "Begin at the safe point and follow the central route into the tree-lined villa district." },
+    { "anchorId": "mixed-villa-intersection", "title": "Mixed-villa intersection", "summary": "Read the varied low-rise silhouettes as an authored cross-section of Badaguan’s garden-villa character." },
+    { "anchorId": "public-green-heart", "title": "Public green heart", "summary": "Pause where planted routes open into a shared green space before the path turns uphill." },
+    { "anchorId": "princess-inspired-anchor", "title": "Princess-inspired composition", "summary": "Look for the pine-green Nordic and crafted-window cues within an interpretive, non-replica composition." },
+    { "anchorId": "butterfly-inspired-anchor", "title": "Butterfly-inspired composition", "summary": "The route next frames authored Mansard and brick-timber cues associated with the landmark family." },
+    { "anchorId": "shore-huashi-vista", "title": "Shore and Huashi-inspired vista", "summary": "Finish with a framed sea view and a compact castle-like shore composition before returning to the safe point." }
+  ]
+}

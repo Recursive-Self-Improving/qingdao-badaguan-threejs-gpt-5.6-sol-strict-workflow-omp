@@ -159,6 +159,21 @@ export class MovementController {
     this.applyRotation();
   }
 
+  restorePose(pose: MovementPose): void {
+    if (![pose.x, pose.z, pose.yaw, pose.pitch].every(Number.isFinite)) {
+      throw new TypeError('Recovery pose must contain finite horizontal position and orientation.');
+    }
+    const requested = { x: pose.x, z: pose.z };
+    const resolved = this.navigation.resolve(requested, requested, { radius: this.cameraRadius });
+    if (!Number.isFinite(resolved.position.x) || !Number.isFinite(resolved.position.z) || !Number.isFinite(resolved.groundHeight)) {
+      throw new Error('Recovery pose could not be resolved against navigation.');
+    }
+    this.yaw = pose.yaw;
+    this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, pose.pitch));
+    this.camera.position.set(resolved.position.x, resolved.groundHeight + this.eyeHeight, resolved.position.z);
+    this.applyRotation();
+    this.discardNextDelta = true;
+  }
   reset(): void {
     const resolved = this.navigation.resolve(
       this.resetPose.position,

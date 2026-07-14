@@ -1,6 +1,7 @@
 import {
   INITIAL_APP_STATE,
   getAppStateInvariant,
+  normalizeRestorableProjection,
   reduceAppState,
   type AppEvent,
   type AppState,
@@ -18,6 +19,12 @@ import { PointerLockLook, type PointerLockOutcome } from '../exploration/Pointer
 import { DragLook } from '../exploration/DragLook';
 import { TouchLook } from '../exploration/TouchLook';
 import type { InputClearReason } from '../exploration/types';
+import { AssetCoordinator, type AssetAttempt, type LoadOutcome } from '../loading/AssetCoordinator';
+import { neutralRouteGuideFallback, optionalFallback, requiredFailureMessage } from '../loading/fallbacks';
+import { parseRouteGuide, ROUTE_GUIDE_ASSET_ID, ROUTE_GUIDE_URL, type RouteGuide } from '../loading/routeGuide';
+import { ContextRecovery, type ContextToken } from '../render/contextRecovery';
+import type { MovementPose } from '../exploration/MovementController';
+import type { LandscapeSettings } from '../world/types';
 
 type DevelopmentScenario =
   | 'unsupported'
@@ -43,14 +50,19 @@ const DEVELOPMENT_SCENARIOS: Record<DevelopmentScenario, true> = {
 };
 
 function readDevelopmentScenario(location: Location): DevelopmentScenario | null {
-  if (!import.meta.env.DEV) {
-    return null;
-  }
-
+  if (!import.meta.env.DEV) return null;
   const candidate = new URLSearchParams(location.search).get('lifecycle');
   return candidate !== null && Object.hasOwn(DEVELOPMENT_SCENARIOS, candidate)
     ? (candidate as DevelopmentScenario)
     : null;
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function waitForDevelopmentHold(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export interface AppControllerConfig {
@@ -66,8 +78,15 @@ export function installPageHideHandler(
   return () => target.removeEventListener('pagehide', onPageHide);
 }
 
+interface QueuedOptionalOutcome {
+  readonly source: 'startup' | 'retry';
+  readonly attempt: number;
+  readonly outcome: LoadOutcome<RouteGuide>;
+}
+
 export class AppController {
   private state: AppState = INITIAL_APP_STATE;
+
   private readonly scenario: DevelopmentScenario | null;
   private readonly capabilityOptions: CapabilityDetectionOptions | undefined;
   private readonly preferences: PreferenceSnapshot;
@@ -83,6 +102,23 @@ export class AppController {
   private hasConfirmedPointerLock = false;
   private pointerLockTerminalFallback = false;
   private developmentRuntimeCleanup: (() => void) | null = null;
+  private readonly assetCoordinator = new AssetCoordinator({
+    onProgress: (attempt, progress) => this.dispatch({ type: 'LOAD_PROGRESS', attempt, progress, canCancel: progress.phase !== 'essential' }),
+  });
+  private activeAssetAttempt: AssetAttempt | null = null;
+  private contextRecovery: ContextRecovery | null = null;
+  private recoveryPose: MovementPose | null = null;
+  private recoveryToken: ContextToken | null = null;
+  private recoveryAbort: AbortController | null = null;
+  private recoverySettings: LandscapeSettings | null = null;
+  private recoveryRuntime: ThreeRuntime | null = null;
+  private queuedOptionalOutcome: QueuedOptionalOutcome | null = null;
+  private readonly routeTimeoutMs: number;
+  private readonly recoveryTimeoutMs: number;
+  private readonly failRuntimeBuild: boolean;
+  private readonly failRecoveryBuild: boolean;
+  private readonly recoveryHoldMs: number;
+  private readonly loadingHoldMs: number;
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || event.defaultPrevented) {
       return;
@@ -100,6 +136,17 @@ export class AppController {
   constructor(location: Location = window.location, config: AppControllerConfig = {}) {
     this.scenario = readDevelopmentScenario(location);
     this.capabilityOptions = import.meta.env.DEV ? config.capabilityOptions : undefined;
+    const developmentParameters = new URLSearchParams(location.search);
+    const requestedRecoveryTimeout = import.meta.env.DEV ? Number(developmentParameters.get('recoveryTimeoutMs')) : Number.NaN;
+    this.recoveryTimeoutMs = Number.isFinite(requestedRecoveryTimeout) && requestedRecoveryTimeout > 0 ? requestedRecoveryTimeout : 10_000;
+    const requestedRecoveryHold = import.meta.env.DEV ? Number(developmentParameters.get('recoveryHoldMs')) : Number.NaN;
+    this.recoveryHoldMs = Number.isFinite(requestedRecoveryHold) && requestedRecoveryHold > 0 ? requestedRecoveryHold : 0;
+    const requestedTimeout = import.meta.env.DEV ? Number(developmentParameters.get('routeTimeoutMs')) : Number.NaN;
+    this.routeTimeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : 60_000;
+    this.failRuntimeBuild = import.meta.env.DEV && developmentParameters.get('failRuntime') === '1';
+    this.failRecoveryBuild = import.meta.env.DEV && developmentParameters.get('failRecovery') === '1';
+    const requestedHold = import.meta.env.DEV ? Number(developmentParameters.get('loadingHoldMs')) : Number.NaN;
+    this.loadingHoldMs = Number.isFinite(requestedHold) && requestedHold > 0 ? requestedHold : 0;
     this.preferences = detectPreferences();
     this.ui = createAppUI({
       preferences: this.preferences,
@@ -117,8 +164,10 @@ export class AppController {
     this.interactionViewportObserver.start();
     window.addEventListener('keydown', this.onKeyDown);
     if (import.meta.env.DEV) this.installDevelopmentRuntimeSurface();
-    this.dispatch({ type: 'BOOT' });
-    this.evaluateCapabilities();
+    const attempt = this.assetCoordinator.beginAttempt();
+    this.activeAssetAttempt = attempt;
+    this.dispatch({ type: 'BOOT', attempt: attempt.generation });
+    void this.beginLoadAttempt(attempt);
   }
 
   handlePageHide(event: PageTransitionEvent): void {
@@ -137,6 +186,8 @@ export class AppController {
       }
     };
     cleanup(() => window.removeEventListener('keydown', this.onKeyDown));
+    cleanup(() => this.assetCoordinator.dispose());
+    cleanup(() => this.clearContextRecovery());
     cleanup(() => this.developmentRuntimeCleanup?.());
     this.developmentRuntimeCleanup = null;
     cleanup(() => this.interactionViewportObserver?.dispose());
@@ -147,48 +198,129 @@ export class AppController {
   }
 
   private handleUIAction(action: AppUIAction): void {
-    if (action.type === 'RESET') {
-      this.resetExploration();
-      return;
-    }
-    if (action.type === 'RETRY') {
-      const retry = this.dispatch(action);
-      if (retry) {
-        this.disposeRuntime();
-        this.evaluateCapabilities();
+    if (action.type === 'RESET') { this.resetExploration(); return; }
+    if (action.type === 'CANCEL_LOADING') {
+      const attempt = this.activeAssetAttempt;
+      if (attempt?.cancel()) {
+        this.activeAssetAttempt = null;
+        this.dispatch({ type: 'LOAD_CANCELLED', attempt: attempt.generation });
+        this.ui.focusPrimary('retry');
       }
       return;
     }
-
+    if (action.type === 'RELOAD') { window.location.reload(); return; }
+    if (action.type === 'RETURN_TO_STATIC') {
+      const replaceCanvas = this.state.kind === 'context-lost' || this.state.kind === 'recovery-failed';
+      if (this.dispatch(action)) {
+        this.clearContextRecovery(); this.disposeRuntime();
+        if (replaceCanvas) this.ui.replaceCanvas();
+        this.ui.focusHeading();
+      }
+      return;
+    }
+    if (action.type === 'RETRY_OPTIONAL') {
+      if (import.meta.env.DEV) document.documentElement.dataset.optionalRetryActivated = 'true';
+      if (this.dispatch({ type: 'RETRY_OPTIONAL', assetId: ROUTE_GUIDE_ASSET_ID })) void this.retryOptionalGuide();
+      return;
+    }
+    if (action.type === 'RETRY') {
+      const replaceCanvas = this.state.kind === 'context-lost' || this.state.kind === 'recovery-failed' || (this.state.kind === 'static' && this.state.reason === 'recovery-failed');
+      const next = this.assetCoordinator.retry();
+      if (this.dispatch({ type: 'RETRY', attempt: next.generation })) {
+        this.clearContextRecovery(); this.disposeRuntime();
+        if (replaceCanvas) this.ui.replaceCanvas();
+        this.activeAssetAttempt = next;
+        void this.beginLoadAttempt(next);
+        this.ui.focusPrimary('cancel-loading');
+      } else next.cancel();
+      return;
+    }
     const transitioned = this.dispatch(action);
     if (!transitioned) return;
     if (action.type === 'START_EXPLORING' || action.type === 'RESUME') {
       this.ui.focusCanvas();
       this.inputController?.setIntentionalFocus(true);
       const mayRequestInitialLock = action.type === 'START_EXPLORING';
-      const mayReacquireOwnedLock = action.type === 'RESUME'
-        && this.hasConfirmedPointerLock
-        && !this.pointerLockTerminalFallback;
-      if (this.scenario === null && this.hasFinePointer() && (mayRequestInitialLock || mayReacquireOwnedLock)) {
-        this.pointerLockLook?.requestLock();
-      }
+      const mayReacquireOwnedLock = action.type === 'RESUME' && this.hasConfirmedPointerLock && !this.pointerLockTerminalFallback;
+      if (this.scenario === null && this.hasFinePointer() && (mayRequestInitialLock || mayReacquireOwnedLock)) this.pointerLockLook?.requestLock();
       this.applyExplorationScenario();
     }
   }
 
-  private evaluateCapabilities(): void {
-    const options: CapabilityDetectionOptions =
-      this.scenario === 'unsupported' ? { result: false } : (this.capabilityOptions ?? {});
+  private async beginLoadAttempt(attempt: AssetAttempt): Promise<void> {
+    const options: CapabilityDetectionOptions = this.scenario === 'unsupported' ? { result: false } : (this.capabilityOptions ?? {});
     const capabilities = detectCapabilities(options);
-
     if (capabilities.status === 'unsupported') {
       this.dispatch({ type: 'CAPABILITY_UNSUPPORTED', reason: capabilities.reason });
       return;
     }
-
-    if (!this.createRuntime()) return;
-    this.dispatch({ type: 'CAPABILITY_SUPPORTED' });
+    if (this.loadingHoldMs > 0) await waitForDevelopmentHold(this.loadingHoldMs);
+    await waitForPaint();
+    if (attempt.signal.aborted || this.destroyed) return;
+    const optionalPromise = attempt.loadOptional({ id: ROUTE_GUIDE_ASSET_ID, label: 'Route guide', url: ROUTE_GUIDE_URL, kind: 'optional', timeoutMs: this.routeTimeoutMs, parse: parseRouteGuide });
+    if (this.loadingHoldMs > 0) await waitForDevelopmentHold(this.loadingHoldMs);
+    await waitForPaint();
+    if (attempt.signal.aborted || this.destroyed) return;
+    this.dispatch({ type: 'LOAD_PROGRESS', attempt: attempt.generation, progress: { kind: 'indeterminate', phase: 'essential', label: 'Building the procedural district' }, canCancel: false });
+    const essential = await attempt.runEssential(() => {
+      if (this.failRuntimeBuild) throw new Error('Forced DEV runtime build failure.');
+      if (!this.createRuntime()) throw new Error('Runtime construction failed.');
+    });
+    if (essential.kind === 'cancelled') return;
+    if (essential.kind === 'failed') {
+      this.dispatch({ type: 'LOAD_FAILED', attempt: attempt.generation, reason: requiredFailureMessage(essential.failure) });
+      this.ui.focusPrimary('retry');
+      return;
+    }
+    this.activeAssetAttempt = null;
+    this.dispatch({ type: 'LOAD_ESSENTIAL_READY', attempt: attempt.generation });
+    this.installContextRecovery();
     this.applyPostCapabilityScenario();
+    this.applyOptionalOutcome(attempt.generation, await optionalPromise);
+  }
+
+  private applyOptionalOutcome(attempt: number, outcome: LoadOutcome<RouteGuide>): void {
+    if (this.state.kind === 'context-lost') {
+      this.queuedOptionalOutcome = { source: 'startup', attempt, outcome };
+      return;
+    }
+    if (outcome.kind === 'ready') {
+      this.ui.setRouteGuide(outcome.value);
+      return;
+    }
+    if (outcome.kind === 'degraded') {
+      if (import.meta.env.DEV) {
+        document.documentElement.dataset.optionalFailure = outcome.failures[0]?.kind ?? 'unknown';
+        document.documentElement.dataset.optionalCause = String(outcome.failures[0]?.cause);
+      }
+      this.ui.setRouteGuide(neutralRouteGuideFallback());
+      this.dispatch({ type: 'LOAD_OPTIONAL_FAILED', attempt, failure: optionalFallback(outcome.failures[0]!) });
+      this.ui.announce(`optional:${attempt}:failed`, 'Route guide unavailable. The 3D scene and controls still work.');
+    }
+  }
+
+  private async retryOptionalGuide(): Promise<void> {
+    this.ui.announce('optional:retrying', 'Retrying the route guide.');
+    const attempt = this.assetCoordinator.retry();
+    const outcome = await attempt.loadOptional({ id: ROUTE_GUIDE_ASSET_ID, label: 'Route guide', url: ROUTE_GUIDE_URL, kind: 'optional', timeoutMs: this.routeTimeoutMs, parse: parseRouteGuide });
+    if (this.state.kind === 'context-lost') {
+      this.queuedOptionalOutcome = { source: 'retry', attempt: attempt.generation, outcome };
+      return;
+    }
+    this.applyRetriedOptionalOutcome(attempt.generation, outcome);
+  }
+
+  private applyRetriedOptionalOutcome(attempt: number, outcome: LoadOutcome<RouteGuide>): void {
+    if (outcome.kind === 'ready') {
+      this.ui.setRouteGuide(outcome.value);
+      this.dispatch({ type: 'LOAD_OPTIONAL_RECOVERED', assetId: ROUTE_GUIDE_ASSET_ID });
+      this.ui.announce(`optional:${attempt}:restored`, 'Route guide restored.');
+      this.focusOperationalState();
+    } else if (outcome.kind === 'degraded') {
+      this.ui.setRouteGuide(neutralRouteGuideFallback());
+      this.dispatch({ type: 'LOAD_OPTIONAL_FAILED', failure: optionalFallback(outcome.failures[0]!) });
+      this.ui.announce(`optional:${attempt}:failed`, 'Route guide is still unavailable. The 3D scene and controls still work.');
+    }
   }
 
   private applyPostCapabilityScenario(): void {
@@ -238,122 +370,51 @@ export class AppController {
     const listener = (event: Event): void => {
       if (!(event instanceof CustomEvent)) return;
       const detail = event.detail as Record<string, unknown> | null;
-      if (detail?.action === 'rebuild') {
-        this.runtime?.rebuildScene();
-        return;
-      }
+      if (detail?.action === 'rebuild') { this.runtime?.rebuildScene(); return; }
       if (detail?.action === 'landscape/set-settings') {
         const settings = detail.settings;
         if (typeof settings === 'object' && settings !== null) {
-          const candidate = settings as Record<string, unknown>;
-          const density = candidate.density;
-          const motion = candidate.motion;
-          if ((density === 'high' || density === 'medium' || density === 'low')
-            && (motion === 'standard' || motion === 'reduced')) {
-            this.runtime?.rebuildScene(Object.freeze({ density, motion }));
-          }
+          const { density, motion } = settings as Record<string, unknown>;
+          if ((density === 'high' || density === 'medium' || density === 'low') && (motion === 'standard' || motion === 'reduced')) this.runtime?.rebuildScene(Object.freeze({ density, motion }));
         }
         return;
       }
-      if (detail?.action === 'landscape/freeze-time') {
-        if (typeof detail.time === 'number' && Number.isFinite(detail.time) && detail.time >= 0) {
-          this.runtime?.setLandscapeCaptureTime(detail.time);
-        }
-        return;
-      }
-      if (detail?.action === 'landscape/unfreeze') {
-        this.runtime?.setLandscapeCaptureTime(null);
-        return;
-      }
-      if (detail?.action === 'landscape/reset') {
-        this.runtime?.resetLandscape();
-        return;
-      }
-      if (detail?.action === 'landscape/frame') {
-        if (typeof detail.view === 'string') this.runtime?.frameLandscape(detail.view);
-        return;
-      }
+      if (detail?.action === 'landscape/freeze-time') { if (typeof detail.time === 'number' && Number.isFinite(detail.time) && detail.time >= 0) this.runtime?.setLandscapeCaptureTime(detail.time); return; }
+      if (detail?.action === 'landscape/unfreeze') { this.runtime?.setLandscapeCaptureTime(null); return; }
+      if (detail?.action === 'landscape/reset') { this.runtime?.resetLandscape(); return; }
+      if (detail?.action === 'landscape/frame') { if (typeof detail.view === 'string') this.runtime?.frameLandscape(detail.view); return; }
       if (detail?.action === 'environment/probe') {
         const position = detail.position;
         const target = detail.target;
-        if (Array.isArray(position) && position.length === 3 && position.every((value) => typeof value === 'number' && Number.isFinite(value))
-          && Array.isArray(target) && target.length === 3 && target.every((value) => typeof value === 'number' && Number.isFinite(value))) {
-          this.runtime?.frameEnvironmentProbe(
-            position as unknown as readonly [number, number, number],
-            target as unknown as readonly [number, number, number],
-            typeof detail.id === 'string' ? detail.id : 'probe',
-          );
-        }
+        if (Array.isArray(position) && position.length === 3 && position.every((value) => typeof value === 'number' && Number.isFinite(value)) && Array.isArray(target) && target.length === 3 && target.every((value) => typeof value === 'number' && Number.isFinite(value))) this.runtime?.frameEnvironmentProbe(position as unknown as readonly [number, number, number], target as unknown as readonly [number, number, number], typeof detail.id === 'string' ? detail.id : 'probe');
         return;
       }
-      if (detail?.action === 'environment/frame') {
-        if (typeof detail.view === 'string') this.runtime?.frameEnvironment(detail.view);
-        return;
-      }
-      if (detail?.action === 'world-debug/set-visible') {
-        if (typeof detail.visible === 'boolean') this.runtime?.setWorldDebugVisible(detail.visible);
-        return;
-      }
-      if (detail?.action === 'world-debug/visit-anchor') {
-        if (typeof detail.anchorId === 'string') this.runtime?.visitWorldAnchor(detail.anchorId);
-        return;
-      }
-      if (detail?.action === 'world-debug/frame-view') {
-        if (detail.name === 'grid' || detail.name === 'public-green' || detail.name === 'sightlines' || detail.name === 'planting') {
-          this.runtime?.frameWorldDebugView(detail.name);
-        }
-        return;
-      }
+      if (detail?.action === 'environment/frame') { if (typeof detail.view === 'string') this.runtime?.frameEnvironment(detail.view); return; }
+      if (detail?.action === 'world-debug/set-visible') { if (typeof detail.visible === 'boolean') this.runtime?.setWorldDebugVisible(detail.visible); return; }
+      if (detail?.action === 'world-debug/visit-anchor') { if (typeof detail.anchorId === 'string') this.runtime?.visitWorldAnchor(detail.anchorId); return; }
+      if (detail?.action === 'world-debug/frame-view') { if (detail.name === 'grid' || detail.name === 'public-green' || detail.name === 'sightlines' || detail.name === 'planting') this.runtime?.frameWorldDebugView(detail.name); return; }
       if (detail?.action === 'world-debug/probe') {
-        if (typeof detail.x === 'number' && Number.isFinite(detail.x)
-          && typeof detail.z === 'number' && Number.isFinite(detail.z)) {
-          const radius = typeof detail.radius === 'number' && Number.isFinite(detail.radius)
-            ? detail.radius
-            : undefined;
-          const candidateFrom = detail.from;
-          const from = typeof candidateFrom === 'object'
-            && candidateFrom !== null
-            && typeof (candidateFrom as Record<string, unknown>).x === 'number'
-            && Number.isFinite((candidateFrom as Record<string, unknown>).x)
-            && typeof (candidateFrom as Record<string, unknown>).z === 'number'
-            && Number.isFinite((candidateFrom as Record<string, unknown>).z)
-            ? {
-                x: (candidateFrom as { readonly x: number }).x,
-                z: (candidateFrom as { readonly z: number }).z,
-              }
-            : undefined;
+        if (typeof detail.x === 'number' && Number.isFinite(detail.x) && typeof detail.z === 'number' && Number.isFinite(detail.z)) {
+          const radius = typeof detail.radius === 'number' && Number.isFinite(detail.radius) ? detail.radius : undefined;
+          const candidate = detail.from as Record<string, unknown> | null;
+          const from = candidate !== null && typeof candidate === 'object' && typeof candidate.x === 'number' && Number.isFinite(candidate.x) && typeof candidate.z === 'number' && Number.isFinite(candidate.z) ? { x: candidate.x, z: candidate.z } : undefined;
           this.runtime?.probeWorldNavigation({ x: detail.x, z: detail.z }, radius, from);
         }
         return;
       }
-      if (detail?.action === 'architecture/frame') {
-        const view = detail.view;
-        if (typeof detail.subjectId === 'string'
-          && (view === 'front' || view === 'three-quarter' || view === 'route' || view === 'low')) {
-          this.runtime?.frameArchitecture(detail.subjectId, view);
-        }
-        return;
-      }
+      if (detail?.action === 'architecture/frame') { if (typeof detail.subjectId === 'string' && (detail.view === 'front' || detail.view === 'three-quarter' || detail.view === 'route' || detail.view === 'low')) this.runtime?.frameArchitecture(detail.subjectId, detail.view); return; }
       if (detail?.action !== 'cycle' || this.runtime === null) return;
-      const requestedCount = typeof detail.count === 'number' ? Math.floor(detail.count) : 10;
-      const count = Math.min(100, Math.max(1, requestedCount));
-      for (let index = 0; index < count; index += 1) {
-        this.disposeRuntime();
-        if (!this.createRuntime()) break;
-      }
+      const count = Math.min(100, Math.max(1, typeof detail.count === 'number' ? Math.floor(detail.count) : 10));
+      for (let index = 0; index < count; index += 1) { this.disposeRuntime(); if (!this.createRuntime()) break; }
     };
     document.addEventListener(eventName, listener);
     this.developmentRuntimeCleanup = () => document.removeEventListener(eventName, listener);
   }
 
-  private createRuntime(): boolean {
+  private createRuntime(landscapeSettings?: LandscapeSettings): boolean {
     if (this.destroyed || this.runtime !== null) return this.runtime !== null;
     const canvas = document.querySelector<HTMLCanvasElement>('#app-canvas');
-    if (canvas === null) {
-      this.dispatch({ type: 'FATAL', reason: 'The graphics canvas is unavailable.' });
-      return false;
-    }
-
+    if (canvas === null) return false;
     let runtime: ThreeRuntime | null = null;
     let input: InputController | null = null;
     let look: PointerLockLook | null = null;
@@ -361,102 +422,95 @@ export class AppController {
     let touch: TouchLook | null = null;
     let movement: MovementController | null = null;
     try {
-      runtime = new ThreeRuntime(canvas, {
-        onUpdate: (frame) => this.movementController?.update(frame.deltaSeconds),
-        landscapeSettings: Object.freeze({
-          density: 'high',
-          motion: this.preferences.prefersReducedMotion ? 'reduced' : 'standard',
-        }),
-      });
+      runtime = new ThreeRuntime(canvas, { onUpdate: (frame) => this.movementController?.update(frame.deltaSeconds), landscapeSettings: landscapeSettings ?? Object.freeze({ density: 'high', motion: this.preferences.prefersReducedMotion ? 'reduced' : 'standard' }) });
       const world = runtime.worldBuildResult;
       if (world === null) throw new Error('The graphics world was not initialized.');
-      input = new InputController({
-        canvas,
-        onClear: (reason) => this.handleInputClear(reason),
-        onReset: () => this.ui.announceReset(),
-      });
-      movement = new MovementController({
-        camera: runtime.camera,
-        input,
-        navigation: world.navigation,
-        spawnPose: { position: world.navigation.spawn, yaw: world.data.spawnYaw },
-        resetPose: { position: world.navigation.reset, yaw: world.data.resetYaw },
-        eyeHeight: APP_CONFIG.camera.eyeHeight,
-        walkSpeed: APP_CONFIG.controls.walkSpeed,
-        cameraRadius: DEFAULT_CAMERA_RADIUS,
-        maxPitchRadians: APP_CONFIG.controls.maxPitchRadians,
-        maxDeltaSeconds: APP_CONFIG.controls.maxDeltaSeconds,
-      });
-      look = new PointerLockLook({
-        target: canvas,
-        sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel,
-        onLook: (delta) => this.movementController?.applyLook(delta),
-        onOutcome: (outcome) => this.handlePointerLockOutcome(outcome),
-      });
-      drag = new DragLook({
-        target: canvas,
-        sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel,
-        onLook: (delta) => this.movementController?.applyLook(delta),
-      });
-      touch = new TouchLook({
-        target: canvas,
-        sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel,
-        onLook: (delta) => this.movementController?.applyLook(delta),
-      });
-      this.runtime = runtime;
-      this.inputController = input;
-      this.movementController = movement;
-      this.pointerLockLook = look;
-      this.dragLook = drag;
-      this.touchLook = touch;
-      input.start();
-      look.start();
-      drag.start();
-      touch.start();
-      this.syncExplorationControllers();
+      input = new InputController({ canvas, onClear: (reason) => this.handleInputClear(reason), onReset: () => this.ui.announceReset() });
+      movement = new MovementController({ camera: runtime.camera, input, navigation: world.navigation, spawnPose: { position: world.navigation.spawn, yaw: world.data.spawnYaw }, resetPose: { position: world.navigation.reset, yaw: world.data.resetYaw }, eyeHeight: APP_CONFIG.camera.eyeHeight, walkSpeed: APP_CONFIG.controls.walkSpeed, cameraRadius: DEFAULT_CAMERA_RADIUS, maxPitchRadians: APP_CONFIG.controls.maxPitchRadians, maxDeltaSeconds: APP_CONFIG.controls.maxDeltaSeconds });
+      look = new PointerLockLook({ target: canvas, sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel, onLook: (delta) => this.movementController?.applyLook(delta), onOutcome: (outcome) => this.handlePointerLockOutcome(outcome) });
+      drag = new DragLook({ target: canvas, sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel, onLook: (delta) => this.movementController?.applyLook(delta) });
+      touch = new TouchLook({ target: canvas, sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel, onLook: (delta) => this.movementController?.applyLook(delta) });
+      this.runtime = runtime; this.inputController = input; this.movementController = movement; this.pointerLockLook = look; this.dragLook = drag; this.touchLook = touch;
+      input.start(); look.start(); drag.start(); touch.start(); this.syncExplorationControllers();
       return true;
     } catch {
-      this.runtime = null;
-      this.inputController = null;
-      this.movementController = null;
-      this.pointerLockLook = null;
-      this.dragLook = null;
-      this.touchLook = null;
-      drag?.dispose();
-      touch?.dispose();
-      look?.dispose();
-      input?.dispose();
-      movement?.setActive(false);
-      runtime?.dispose();
-      this.dispatch({ type: 'FATAL', reason: 'The graphics runtime could not be created.' });
+      this.runtime = null; this.inputController = null; this.movementController = null; this.pointerLockLook = null; this.dragLook = null; this.touchLook = null;
+      drag?.dispose(); touch?.dispose(); look?.dispose(); input?.dispose(); movement?.setActive(false); runtime?.dispose();
       return false;
     }
   }
 
   private disposeRuntime(): void {
-    const runtime = this.runtime;
-    const input = this.inputController;
-    const movement = this.movementController;
-    const look = this.pointerLockLook;
-    const drag = this.dragLook;
-    const touch = this.touchLook;
-    this.runtime = null;
-    this.inputController = null;
-    this.movementController = null;
-    this.pointerLockLook = null;
-    this.dragLook = null;
-    this.touchLook = null;
-    this.hasConfirmedPointerLock = false;
-    this.pointerLockTerminalFallback = false;
-    look?.releaseLock();
-    look?.dispose();
-    drag?.dispose();
-    touch?.dispose();
-    input?.dispose();
-    movement?.setActive(false);
-    runtime?.dispose();
+    const runtime = this.runtime; const input = this.inputController; const movement = this.movementController; const look = this.pointerLockLook; const drag = this.dragLook; const touch = this.touchLook;
+    this.runtime = null; this.inputController = null; this.movementController = null; this.pointerLockLook = null; this.dragLook = null; this.touchLook = null; this.hasConfirmedPointerLock = false; this.pointerLockTerminalFallback = false;
+    look?.releaseLock(); look?.dispose(); drag?.dispose(); touch?.dispose(); input?.dispose(); movement?.setActive(false); runtime?.dispose();
   }
 
+  private installContextRecovery(): void {
+    if (this.contextRecovery !== null || this.runtime === null) return;
+    this.contextRecovery = new ContextRecovery(this.runtime.renderer.domElement, { onLost: (token) => this.handleContextLost(token), onRestoreRequested: (token) => void this.handleContextRestore(token), onRestoreTimeout: (token) => this.handleContextRecoveryFailure(token) }, this.recoveryTimeoutMs);
+    this.contextRecovery.start();
+  }
+
+  private handleContextLost(token: ContextToken): void {
+    if (this.runtime === null || this.movementController === null || this.destroyed) return;
+    const canvasOwnedFocus = document.activeElement === this.runtime.renderer.domElement || this.hasConfirmedPointerLock;
+    this.recoveryAbort?.abort(); this.recoveryAbort = new AbortController(); this.recoveryToken = token; this.recoveryPose = this.movementController.pose; this.recoverySettings = this.runtime.currentLandscapeSettings; this.recoveryRuntime = this.runtime;
+    this.inputController?.clear('context-lost'); this.dragLook?.cancel(); this.touchLook?.cancel(); this.pointerLockLook?.releaseLock(); this.ui.clearTouchControls(); this.movementController.invalidateResumeDelta(); this.runtime.suspend('context-lost');
+    this.dispatch({ type: 'CONTEXT_LOST' });
+    if (canvasOwnedFocus) this.ui.focusHeading();
+  }
+
+  private async handleContextRestore(token: ContextToken): Promise<void> {
+    if (!this.isCurrentRecovery(token) || this.recoveryPose === null || this.recoverySettings === null) return;
+    const projection = this.state.kind === 'context-lost' ? this.state.restore : undefined;
+    if (!this.dispatch({ type: 'CONTEXT_RECOVERY_STARTED' })) return;
+    if (this.recoveryHoldMs > 0) await waitForDevelopmentHold(this.recoveryHoldMs);
+    await Promise.resolve();
+    if (!this.isCurrentRecovery(token)) return;
+    try {
+      if (this.failRecoveryBuild) throw new Error('Forced DEV recovery build failure.');
+      const pose = this.recoveryPose;
+      const settings = this.recoverySettings;
+      this.contextRecovery?.dispose(); this.contextRecovery = null; this.disposeRuntime();
+      if (!this.isCurrentRecovery(token, false)) return;
+      if (!this.createRuntime(settings) || this.movementController === null || this.runtime === null) throw new Error('Recovery runtime could not be created.');
+      this.movementController.restorePose(pose); this.runtime.validateFrame();
+      if (!this.isCurrentRecovery(token, false)) throw new Error('Recovery generation was superseded.');
+      const restored = projection === undefined ? undefined : normalizeRestorableProjection(projection);
+      this.recoveryAbort?.abort(); this.recoveryAbort = null; this.recoveryToken = null; this.recoveryPose = null; this.recoverySettings = null; this.recoveryRuntime = null;
+      this.dispatch(restored === undefined ? { type: 'CONTEXT_RESTORED' } : { type: 'CONTEXT_RESTORED', projection: restored });
+      this.installContextRecovery();
+      this.ui.announce(`context:${token.generation}:restored`, 'Graphics restored. Your position and settings were kept.');
+      this.focusOperationalState();
+      const queued = this.queuedOptionalOutcome;
+      this.queuedOptionalOutcome = null;
+      if (queued !== null) {
+        if (queued.source === 'startup') this.applyOptionalOutcome(queued.attempt, queued.outcome);
+        else this.applyRetriedOptionalOutcome(queued.attempt, queued.outcome);
+      }
+    } catch {
+      this.handleContextRecoveryFailure(token);
+    }
+  }
+
+  private handleContextRecoveryFailure(token: ContextToken): void {
+    if (!this.isCurrentRecovery(token, false)) return;
+    this.contextRecovery?.fail(token); this.clearContextRecovery(); this.disposeRuntime(); this.dispatch({ type: 'CONTEXT_RECOVERY_FAILED', reason: 'This session cannot safely continue with the current graphics context.' }); this.ui.focusPrimary('reload');
+  }
+
+  private isCurrentRecovery(token: ContextToken, requireOriginalRuntime = true): boolean {
+    return !this.destroyed && this.recoveryToken?.generation === token.generation && this.recoveryAbort?.signal.aborted === false && this.state.kind === 'context-lost' && (!requireOriginalRuntime || this.runtime === this.recoveryRuntime);
+  }
+
+  private clearContextRecovery(): void {
+    this.contextRecovery?.dispose(); this.contextRecovery = null; this.recoveryAbort?.abort(); this.recoveryAbort = null; this.recoveryToken = null; this.recoveryPose = null; this.recoverySettings = null; this.recoveryRuntime = null; this.queuedOptionalOutcome = null;
+  }
+
+  private focusOperationalState(): void {
+    const operational = this.state.kind === 'degraded' ? this.state.underlying : this.state;
+    if (operational?.kind === 'onboarding') this.ui.focusStart(); else if (operational?.kind === 'paused') this.ui.focusResume(); else if (operational?.kind === 'exploring') this.ui.focusCanvas();
+  }
   private dispatch(event: AppEvent): boolean {
     const wasExploring = getAppStateInvariant(this.state).isExploring;
     const transition = reduceAppState(this.state, event);

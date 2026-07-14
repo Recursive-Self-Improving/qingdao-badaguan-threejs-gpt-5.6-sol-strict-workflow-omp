@@ -263,6 +263,8 @@ button:disabled {
   border: 0;
 }
 
+#app-canvas[hidden] { display: none; }
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -287,14 +289,15 @@ button:disabled {
 }
 
 .interface-layer {
-  position: absolute;
-  inset: 0;
+  display: contents;
   pointer-events: none;
 }
 
 .experience-panel,
+.degraded-notice,
 .drawer-panel,
 .controls-region {
+
   pointer-events: auto;
 }
 
@@ -334,6 +337,7 @@ button:disabled {
 }
 
 .experience-panel {
+  z-index: var(--layer-status);
   position: absolute;
   bottom: var(--space-5);
   left: var(--space-5);
@@ -446,9 +450,60 @@ button:disabled {
   padding: var(--space-3);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-sm);
+
   color: var(--color-text);
   background: var(--color-caution-surface);
   font-size: var(--text-sm);
+}
+
+.progress-region {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-4);
+}
+
+.progress-region progress {
+  width: 100%;
+  accent-color: var(--color-accent);
+}
+
+.progress-label {
+  margin: 0;
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.degraded-notice {
+  position: absolute;
+  z-index: var(--layer-status);
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))) + var(--control-min-size) + 3rem + var(--space-6));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(var(--content-wide), calc(100% - var(--space-7)));
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--color-caution);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  background: var(--color-caution-surface);
+  transform: translateX(-50%);
+}
+
+.progress-region[hidden],
+.degraded-notice[hidden] { display: none; }
+
+.degraded-notice p { flex: 1; margin: 0; overflow-wrap: anywhere; }
+.degraded-actions { flex: 0 0 auto; }
+
+@media (max-width: 36rem) {
+  .degraded-notice { align-items: stretch; flex-direction: column; }
+  .degraded-actions .action-button { width: 100%; }
+}
+
+.experience:has(.degraded-notice:not([hidden])) .experience-panel:not([data-compact="true"]) {
+  top: calc(var(--interaction-visible-top, 0px) + max(var(--space-3), var(--safe-area-top, env(safe-area-inset-top))) + var(--control-min-size) + 15.5rem);
 }
 
 .state-detail,

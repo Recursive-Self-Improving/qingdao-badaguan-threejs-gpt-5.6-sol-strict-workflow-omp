@@ -1,7 +1,6 @@
 import { APP_CONFIG, APP_COPY } from '../app/config';
 import type {
   AppEvent,
-  AppOperationalProjection,
   AppPanel,
   AppState,
   AppStateInvariant,
@@ -11,6 +10,7 @@ import { shouldOfferTouchControls, type PreferenceSnapshot } from '../platform/p
 import type { MovementAction } from '../exploration/types';
 import type { InteractionViewportMeasurement } from '../platform/viewport';
 import { TouchControls } from './touchControls';
+import type { RouteGuide } from '../loading/routeGuide';
 
 export type AppUIAction = Extract<
   AppEvent,
@@ -20,10 +20,13 @@ export type AppUIAction = Extract<
       | 'PAUSE'
       | 'RESUME'
       | 'RETRY'
+      | 'RETRY_OPTIONAL'
+      | 'RETURN_TO_STATIC'
+      | 'RELOAD'
       | 'OPEN_PANEL'
       | 'CLOSE_PANEL';
   }
-> | { readonly type: 'RESET' };
+> | { readonly type: 'RESET' } | { readonly type: 'CANCEL_LOADING' };
 
 export type AppUIActionHandler = (action: AppUIAction) => void;
 
@@ -44,6 +47,10 @@ type UICommand =
   | 'resume'
   | 'reset'
   | 'retry'
+  | 'cancel-loading'
+  | 'retry-optional'
+  | 'return-to-static'
+  | 'reload'
   | 'open-help'
   | 'open-settings'
   | 'close-panel';
@@ -55,7 +62,7 @@ type ButtonVariant = 'primary' | 'secondary';
 interface AppUIElements {
   readonly root: HTMLElement;
   readonly experience: HTMLElement;
-  readonly canvas: HTMLCanvasElement;
+  canvas: HTMLCanvasElement;
   readonly interfaceLayer: HTMLElement;
   readonly overlay: HTMLElement;
   readonly kicker: HTMLParagraphElement;
@@ -65,6 +72,11 @@ interface AppUIElements {
   readonly notice: HTMLParagraphElement;
   readonly guide: HTMLUListElement;
   readonly actions: HTMLDivElement;
+  readonly progressRegion: HTMLElement;
+  readonly progress: HTMLProgressElement;
+  readonly progressLabel: HTMLParagraphElement;
+  readonly degradedNotice: HTMLElement;
+  readonly degradedActions: HTMLDivElement;
   readonly controls: HTMLElement;
   readonly help: HTMLElement;
   readonly settings: HTMLElement;
@@ -79,6 +91,8 @@ interface ControlGuideItem {
 interface ActionSpec {
   readonly command: UICommand;
   readonly label: string;
+  readonly ariaLabel?: string;
+  readonly disabled?: boolean;
   readonly variant: ButtonVariant;
   readonly testId: string;
   readonly ariaControls?: string;
@@ -170,6 +184,11 @@ function collectElements(documentRoot: Document): AppUIElements {
     notice: requireElement(documentRoot, '#app-notice', HTMLParagraphElement),
     guide: requireElement(documentRoot, '#app-control-guide', HTMLUListElement),
     actions: requireElement(documentRoot, '#app-actions', HTMLDivElement),
+    progressRegion: requireElement(documentRoot, '#app-progress-region', HTMLElement),
+    progress: requireElement(documentRoot, '#app-progress', HTMLProgressElement),
+    progressLabel: requireElement(documentRoot, '#app-progress-label', HTMLParagraphElement),
+    degradedNotice: requireElement(documentRoot, '#app-degraded-notice', HTMLElement),
+    degradedActions: requireElement(documentRoot, '#app-degraded-actions', HTMLDivElement),
     controls: requireElement(documentRoot, '#app-controls', HTMLElement),
     help: requireElement(documentRoot, '#app-help', HTMLElement),
     settings: requireElement(documentRoot, '#app-settings', HTMLElement),
@@ -184,6 +203,10 @@ function isUICommand(value: string | undefined): value is UICommand {
     case 'resume':
     case 'retry':
     case 'reset':
+    case 'cancel-loading':
+    case 'retry-optional':
+    case 'return-to-static':
+    case 'reload':
     case 'open-help':
     case 'open-settings':
     case 'close-panel':
@@ -205,6 +228,14 @@ function actionForCommand(command: UICommand): AppUIAction {
       return { type: 'RESET' };
     case 'retry':
       return { type: 'RETRY' };
+    case 'cancel-loading':
+      return { type: 'CANCEL_LOADING' };
+    case 'retry-optional':
+      return { type: 'RETRY_OPTIONAL' };
+    case 'return-to-static':
+      return { type: 'RETURN_TO_STATIC' };
+    case 'reload':
+      return { type: 'RELOAD' };
     case 'open-help':
       return { type: 'OPEN_PANEL', panel: 'help' };
     case 'open-settings':
@@ -234,106 +265,32 @@ function pausedInstruction(control: AppStateInvariant['control']): string {
     : APP_COPY.paused;
 }
 
-function operationalKey(projection: AppOperationalProjection): string {
-  switch (projection.kind) {
-    case 'onboarding':
-      return projection.kind;
-    case 'exploring':
-      return `${projection.kind}:${projection.control}:${projection.fallbackReason ?? 'none'}`;
-    case 'paused':
-      return `${projection.kind}:${projection.resumeControl}`;
-  }
-}
 
 function announcementKey(state: AppState): string {
   switch (state.kind) {
-    case 'boot':
-    case 'loading':
-    case 'onboarding':
-    case 'context-lost':
-      return state.kind;
-    case 'exploring':
-      return `${state.kind}:${state.control}:${state.fallbackReason ?? 'none'}`;
-    case 'paused':
-      return `${state.kind}:${state.resumeControl}`;
-    case 'degraded':
-      return `${state.kind}:${state.reason}:${state.underlying === null ? 'none' : operationalKey(state.underlying)}`;
+    case 'boot': return 'boot';
+    case 'loading': return `loading:${state.attempt ?? 0}:${state.phase ?? 'legacy'}`;
+    case 'onboarding': return 'onboarding';
+    case 'exploring': return `${state.kind}:${state.control}:${state.fallbackReason ?? 'none'}`;
+    case 'paused': return `${state.kind}:${state.resumeControl}`;
+    case 'degraded': return `degraded:${(state.failures ?? []).map(({ assetId, status }) => `${assetId}:${status}`).join(',') || state.reason || 'legacy'}`;
+    case 'context-lost': return `context-lost:${state.phase ?? 'legacy'}`;
+    case 'load-cancelled':
     case 'unsupported':
     case 'fatal':
-      return `${state.kind}:${state.reason}`;
+    case 'recovery-failed': return `${state.kind}:${state.reason}`;
+    case 'static': return `static:${state.reason}`;
   }
-}
-
-function degradationNotice(reason: string): string {
-  const detail = reason.trim();
-  return detail === ''
-    ? 'Some optional visual detail is unavailable. The current controls remain usable.'
-    : `Some optional visual detail is unavailable: ${detail}`;
 }
 
 function degradedView(state: Extract<AppState, { readonly kind: 'degraded' }>, invariant: AppStateInvariant): ViewProjection {
-  const notice = degradationNotice(state.reason);
-  const underlying = state.underlying;
-
-  if (underlying === null) {
-    return {
-      kicker: 'Reduced mode',
-      title: 'Badaguan is available with less detail',
-      detail: invariant.visibleOutput,
-      status: invariant.visibleOutput,
-      notice,
-      guide: NO_GUIDE,
-      showDescription: true,
-      compact: false,
-      tone: 'caution',
-    };
-  }
-
-  switch (underlying.kind) {
-    case 'onboarding':
-      return {
-        kicker: 'Reduced mode · Ready',
-        title: 'Begin the Badaguan walk',
-        detail: APP_COPY.onboarding,
-        status: `${invariant.visibleOutput} ${APP_COPY.onboarding}`,
-        notice,
-        guide: ONBOARDING_GUIDE,
-        showDescription: true,
-        compact: false,
-        tone: 'caution',
-      };
-    case 'exploring': {
-      const detail =
-        underlying.control === 'locked'
-          ? APP_CONFIG.lockedInstruction
-          : fallbackInstruction(underlying.fallbackReason);
-      return {
-        kicker: 'Reduced mode · Exploring',
-        title: 'Continue through Badaguan',
-        detail,
-        status: `${invariant.visibleOutput} ${detail}`,
-        notice,
-        guide: NO_GUIDE,
-        showDescription: false,
-        compact: true,
-        tone: 'caution',
-      };
-    }
-    case 'paused': {
-      const detail = pausedInstruction(underlying.resumeControl);
-      return {
-        kicker: 'Reduced mode · Paused',
-        title: 'Badaguan walk paused',
-        detail,
-        status: `${invariant.visibleOutput} ${detail}`,
-        notice,
-        guide: NO_GUIDE,
-        showDescription: false,
-        compact: true,
-        tone: 'caution',
-      };
-    }
-  }
+  const underlying = state.underlying ?? { kind: 'onboarding' as const };
+  const visibleOutput = underlying.kind === 'onboarding'
+    ? APP_COPY.onboarding
+    : underlying.kind === 'exploring'
+      ? (underlying.control === 'locked' ? APP_COPY.exploringLocked : APP_COPY.exploringDrag)
+      : APP_COPY.paused;
+  return viewForState(underlying, { ...invariant, visibleOutput });
 }
 
 function viewForState(state: AppState, invariant: AppStateInvariant): ViewProjection {
@@ -352,15 +309,10 @@ function viewForState(state: AppState, invariant: AppStateInvariant): ViewProjec
       };
     case 'loading':
       return {
-        kicker: 'Experience setup',
-        title: 'Checking 3D support',
-        detail: invariant.visibleOutput,
-        status: invariant.visibleOutput,
-        notice: null,
-        guide: NO_GUIDE,
-        showDescription: true,
-        compact: false,
-        tone: 'default',
+        kicker: 'Experience setup', title: 'Loading Badaguan',
+        detail: state.phase === 'items' ? 'Loading experience items.' : 'Preparing the interactive landscape.',
+        status: state.phase === 'items' ? 'Loading experience items.' : 'Loading Badaguan.',
+        notice: null, guide: NO_GUIDE, showDescription: true, compact: false, tone: 'default',
       };
     case 'onboarding':
       return {
@@ -407,17 +359,17 @@ function viewForState(state: AppState, invariant: AppStateInvariant): ViewProjec
       return degradedView(state, invariant);
     case 'context-lost':
       return {
-        kicker: 'Graphics context lost',
-        title: 'Restart required',
-        detail: invariant.visibleOutput,
-        status: invariant.visibleOutput,
-        notice:
-          'Movement and rendering have stopped. Retry starts a fresh capability check and rebuilds the experience.',
-        guide: NO_GUIDE,
-        showDescription: true,
-        compact: false,
-        tone: 'caution',
+        kicker: state.phase === 'rebuilding' ? 'Graphics recovery' : 'Graphics interrupted',
+        title: 'Restoring the 3D view', detail: invariant.visibleOutput,
+        status: state.phase === 'rebuilding' ? 'Restoring the 3D view.' : 'Graphics interrupted. Movement is paused while the view recovers.',
+        notice: null, guide: NO_GUIDE, showDescription: true, compact: false, tone: 'caution',
       };
+    case 'load-cancelled':
+      return { kicker: 'Loading stopped', title: 'The 3D view did not finish loading', detail: state.reason, status: 'Loading cancelled. Retry or use the static guide.', notice: 'Retry when you are ready, or use the static Badaguan guide.', guide: NO_GUIDE, showDescription: true, compact: false, tone: 'default' };
+    case 'recovery-failed':
+      return { kicker: 'Graphics recovery failed', title: 'The 3D view could not be restored', detail: state.reason, status: 'Graphics recovery failed. Reload or use the static guide.', notice: 'Reload to start a new 3D session, or use the static guide.', guide: NO_GUIDE, showDescription: true, compact: false, tone: 'danger' };
+    case 'static':
+      return { kicker: 'Static guide', title: 'Badaguan without the 3D view', detail: invariant.visibleOutput, status: 'Static Badaguan guide opened.', notice: null, guide: NO_GUIDE, showDescription: true, compact: false, tone: 'default' };
     case 'unsupported':
       return {
         kicker: 'Static Badaguan guide',
@@ -433,12 +385,11 @@ function viewForState(state: AppState, invariant: AppStateInvariant): ViewProjec
       };
     case 'fatal':
       return {
-        kicker: 'Experience stopped',
-        title: 'The Badaguan walk could not continue',
+        kicker: 'Experience unavailable',
+        title: 'The Badaguan walk could not start',
         detail: invariant.visibleOutput,
-        status: invariant.visibleOutput,
-        notice:
-          'The static Badaguan description remains available. Retry starts a clean capability check instead of continuing a failed session.',
+        status: 'The 3D view could not be loaded. Retry or use the static guide.',
+        notice: 'Retry, or continue with the static Badaguan guide.',
         guide: NO_GUIDE,
         showDescription: true,
         compact: false,
@@ -456,24 +407,13 @@ function hasResumeAction(state: AppState): boolean {
 
 function actionSpecs(state: AppState, invariant: AppStateInvariant): readonly ActionSpec[] {
   const actions: ActionSpec[] = [];
-
-  if (invariant.canStart) {
-    actions.push({ command: 'start', label: 'Start', variant: 'primary', testId: 'start-button' });
-  } else if (hasResumeAction(state)) {
-    actions.push({ command: 'resume', label: 'Resume', variant: 'primary', testId: 'resume-button' });
-  } else if (invariant.isExploring) {
-    actions.push({ command: 'pause', label: 'Pause', variant: 'secondary', testId: 'pause-button' });
-  }
-
-  if (invariant.canRetry) {
-    actions.push({
-      command: 'retry',
-      label: 'Retry',
-      variant: actions.length === 0 ? 'primary' : 'secondary',
-      testId: 'retry-button',
-    });
-  }
-
+  if (invariant.canStart) actions.push({ command: 'start', label: 'Start', variant: 'primary', testId: 'start-button' });
+  else if (hasResumeAction(state)) actions.push({ command: 'resume', label: 'Resume', variant: 'primary', testId: 'resume-button' });
+  else if (invariant.isExploring) actions.push({ command: 'pause', label: 'Pause', variant: 'secondary', testId: 'pause-button' });
+  if (invariant.canCancel) actions.push({ command: 'cancel-loading', label: 'Cancel', ariaLabel: 'Cancel loading', variant: 'secondary', testId: 'cancel-loading-button' });
+  if (invariant.canRetry) actions.push({ command: 'retry', label: state.kind === 'static' ? 'Retry 3D' : 'Retry', variant: 'primary', testId: 'retry-button' });
+  if (invariant.canReload) actions.push({ command: 'reload', label: 'Reload', variant: 'primary', testId: 'reload-button' });
+  if (invariant.canReturn) actions.push({ command: 'return-to-static', label: 'Use static guide', variant: 'secondary', testId: 'static-guide-button' });
   return actions;
 }
 
@@ -485,14 +425,15 @@ function updateButton(button: HTMLButtonElement, spec: ActionSpec, className: st
   button.dataset.variant = spec.variant;
   button.dataset.testid = spec.testId;
   button.textContent = spec.label;
+  button.disabled = spec.disabled === true;
+  if (spec.ariaLabel === undefined) button.removeAttribute('aria-label');
+  else button.setAttribute('aria-label', spec.ariaLabel);
   if (spec.command === 'reset') {
     button.setAttribute('aria-label', 'Reset position to the safe point');
     button.removeAttribute('aria-keyshortcuts');
   } else if (spec.command === 'pause') {
-    button.removeAttribute('aria-label');
     button.setAttribute('aria-keyshortcuts', 'Escape');
   } else {
-    button.removeAttribute('aria-label');
     button.removeAttribute('aria-keyshortcuts');
   }
 
@@ -630,7 +571,7 @@ function createDisclosureSection(
   return section;
 }
 
-function createHelpPanel(documentRoot: Document): DocumentFragment {
+function createHelpPanel(documentRoot: Document, routeGuide: RouteGuide | null): DocumentFragment {
   const fragment = documentRoot.createDocumentFragment();
   const content = documentRoot.createElement('div');
   const intro = documentRoot.createElement('p');
@@ -680,6 +621,15 @@ function createHelpPanel(documentRoot: Document): DocumentFragment {
       'help-artistic-interpretation',
     ),
   );
+  if (routeGuide !== null) {
+    content.append(createDisclosureSection(
+      documentRoot,
+      'app-help-suggested-walk-title',
+      'Suggested walk',
+      routeGuide.stops.map(({ title, summary }) => `${title}: ${summary}`),
+      'help-suggested-walk',
+    ));
+  }
   fragment.append(
     createDrawerHeader(documentRoot, 'app-help-title', 'Help', 'close-help-button'),
     content,
@@ -777,6 +727,7 @@ export class AppUI {
   private lastAnnouncementKey: string | null = null;
   private returnFocusCommand: ReturnFocusCommand | null = null;
   private destroyed = false;
+  private routeGuide: RouteGuide | null = null;
 
   constructor(options: AppUIOptions) {
     this.documentRoot = document;
@@ -808,6 +759,8 @@ export class AppUI {
     this.renderShellState(state, invariant);
     this.renderView(view);
     this.renderActions(actionSpecs(state, invariant));
+    this.renderProgress(state);
+    this.renderDegradedNotice(state);
     this.renderUtilityControls(state, invariant.panel);
     this.renderPanels(invariant.panel, previousPanel);
     this.renderDrawerIsolation(invariant.panel);
@@ -832,6 +785,27 @@ export class AppUI {
     return this.documentRoot.activeElement === this.elements.canvas;
   }
 
+  focusPrimary(command: 'retry' | 'reload' | 'cancel-loading'): boolean {
+    return this.focusCommand(command);
+  }
+
+  focusHeading(): void {
+    this.elements.heading.tabIndex = -1;
+    this.elements.heading.focus({ preventScroll: true });
+  }
+
+  setRouteGuide(routeGuide: RouteGuide | null): void {
+    this.routeGuide = routeGuide;
+    if (this.currentPanel === 'help') this.elements.help.replaceChildren(createHelpPanel(this.documentRoot, routeGuide));
+  }
+
+  replaceCanvas(): HTMLCanvasElement {
+    const replacement = this.elements.canvas.cloneNode(false) as HTMLCanvasElement;
+    this.elements.canvas.replaceWith(replacement);
+    this.elements.canvas = replacement;
+    return replacement;
+  }
+
   clearTouchControls(): void { this.touchControls.clear(); }
 
   get interactionViewportElement(): HTMLElement { return this.elements.experience; }
@@ -851,6 +825,13 @@ export class AppUI {
   announceReset(): void {
     this.elements.status.textContent = 'Position reset to the safe point.';
     this.lastAnnouncementKey = null;
+  }
+
+  announce(id: string, text: string): void {
+    if (this.lastAnnouncementKey === id) return;
+    this.elements.status.hidden = false;
+    this.elements.status.textContent = text;
+    this.lastAnnouncementKey = id;
   }
 
   destroy(): void {
@@ -908,6 +889,10 @@ export class AppUI {
   };
 
   private renderShellState(state: AppState, invariant: AppStateInvariant): void {
+    const describedBy = new Set((this.elements.canvas.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean));
+    if (state.kind === 'degraded') describedBy.add('app-degraded-text');
+    else describedBy.delete('app-degraded-text');
+    this.elements.canvas.setAttribute('aria-describedby', [...describedBy].join(' '));
     this.elements.root.dataset.appState = state.kind;
     this.elements.root.dataset.panel = invariant.panel;
     if (invariant.control === null) {
@@ -916,13 +901,14 @@ export class AppUI {
       this.elements.root.dataset.controlMode = invariant.control;
     }
 
-    const busy = state.kind === 'boot' || state.kind === 'loading';
+    const busy = state.kind === 'boot' || state.kind === 'loading' || state.kind === 'context-lost';
     this.elements.experience.removeAttribute('aria-busy');
     if (busy) {
       this.elements.overlay.setAttribute('aria-busy', 'true');
     } else {
       this.elements.overlay.removeAttribute('aria-busy');
     }
+    this.elements.canvas.hidden = state.kind === 'static';
     if (invariant.isExploring && invariant.panel === 'none') {
       this.elements.canvas.tabIndex = 0;
       this.elements.canvas.dataset.lookActive = invariant.control === 'drag' ? 'true' : 'false';
@@ -956,6 +942,44 @@ export class AppUI {
     this.elements.notice.textContent = view.notice;
     this.elements.notice.hidden = view.notice === null;
     appendControlGuide(this.documentRoot, this.elements.guide, view.guide);
+  }
+
+  private renderProgress(state: AppState): void {
+    const blocking = state.kind === 'loading' || state.kind === 'context-lost';
+    this.elements.progressRegion.hidden = !blocking;
+    if (!blocking) {
+      this.elements.progress.removeAttribute('value');
+      this.elements.progress.removeAttribute('aria-valuetext');
+      this.elements.progressLabel.textContent = '';
+      return;
+    }
+    if (state.kind === 'loading' && state.progress?.kind === 'items') {
+      const { loaded, total } = state.progress;
+      this.elements.progress.max = total;
+      this.elements.progress.value = loaded;
+      this.elements.progress.setAttribute('aria-valuetext', `${loaded} of ${total} items loaded`);
+      this.elements.progressLabel.textContent = `Loaded ${loaded} of ${total} items.`;
+      return;
+    }
+    this.elements.progress.removeAttribute('value');
+    this.elements.progress.removeAttribute('aria-valuetext');
+    this.elements.progressLabel.textContent = state.kind === 'context-lost'
+      ? (state.phase === 'rebuilding' ? 'Restoring graphics.' : 'Waiting for graphics to return.')
+      : state.phase === 'items'
+        ? 'Loading items. Total item count is not yet known.'
+        : 'Preparing required resources. Item total not yet known.';
+  }
+
+  private renderDegradedNotice(state: AppState): void {
+    const visible = state.kind === 'degraded';
+    this.elements.degradedNotice.hidden = !visible;
+    this.elements.degradedNotice.inert = !visible || (state.panel ?? 'none') !== 'none';
+    if (!visible) {
+      this.elements.degradedActions.replaceChildren();
+      return;
+    }
+    const pending = (state.failures ?? []).some(({ status }) => status === 'retrying');
+    reconcileButtons(this.documentRoot, this.elements.degradedActions, [{ command: 'retry-optional', label: pending ? 'Retrying…' : 'Retry guide', variant: 'secondary', testId: 'retry-optional-button', disabled: pending }], 'action-button');
   }
 
   private renderActions(specs: readonly ActionSpec[]): void {
@@ -1013,7 +1037,7 @@ export class AppUI {
     this.elements.settings.hidden = panel !== 'settings';
 
     if (panel === 'help') {
-      this.elements.help.replaceChildren(createHelpPanel(this.documentRoot));
+      this.elements.help.replaceChildren(createHelpPanel(this.documentRoot, this.routeGuide));
       this.elements.settings.replaceChildren();
     } else if (panel === 'settings') {
       this.elements.settings.replaceChildren(

@@ -253,14 +253,18 @@ for (const scenario of ['context-lost', 'fatal'] as const) {
   test(`forced ${scenario} is actionable, announced, and not left busy`, async ({ page }) => {
     await page.goto(supportedScenarioUrl(scenario));
     await expect(page.locator('#app')).toHaveAttribute('data-app-state', scenario);
-    await expect(page.getByTestId('retry-button')).toBeVisible();
+    if (scenario === 'context-lost') {
+      await expect(page.getByTestId('static-guide-button')).toBeVisible();
+      await expect(page.locator('#app-detail')).toContainText(/position and settings/i);
+      await expect(page.locator('#app-overlay')).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('#app-progress-region')).toBeVisible();
+    } else {
+      await expect(page.getByTestId('retry-button')).toBeVisible();
+      await expect(page.locator('#app-overlay')).not.toHaveAttribute('aria-busy', 'true');
+    }
     await expect(page.locator('#app-status')).toBeVisible();
     await expect(page.locator('#app-status')).not.toHaveText('');
-    if (scenario === 'context-lost') {
-      await expect(page.locator('#app-detail')).toContainText(/restart is required/i);
-    }
     await expect(page.locator('#experience')).not.toHaveAttribute('aria-busy', 'true');
-    await expect(page.locator('#app-overlay')).not.toHaveAttribute('aria-busy', 'true');
     await expect(page.locator('[aria-live]')).toHaveCount(1);
   });
 }
