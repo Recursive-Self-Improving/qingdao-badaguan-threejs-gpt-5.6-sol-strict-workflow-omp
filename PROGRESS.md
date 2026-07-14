@@ -265,7 +265,7 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 - **Latest review round is clean:** yes
 - **Implementation review status:** complete; Round-2 data/factory, runtime/evidence, and security/performance packets are CLEAN, all accounting/provenance findings are resolved, and distinct post-fix `agent://C06Round4AccountingReview` is terminal CLEAN at corrected pre-closure boundary `4a8d222`.
 - **Blocker:** none
-- **Unblock condition:** satisfied; C06, C07, and C08 are complete, and C09 is the earliest incomplete, next dependency-ready chunk and remains `not started`.
+- **Unblock condition:** satisfied; C06, C07, C08, and C09 are complete, and C10 is the earliest incomplete, next dependency-ready chunk and remains `not started`.
 ---
 ## C07 — Deliver the coastal lighting and atmosphere
 
@@ -273,7 +273,7 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 - **Session/date:** 2026-07-13
 - **Dependencies:** C06 complete
 - **Canonical tasks checked:** 3/3
-- **Readiness:** Complete. All three canonical tasks, every acceptance and focused-verification obligation, the implementation/fix commit chain through `ca821f3be26d7eb97ca8a945a8961488c637b255`, sealed terminal evidence, and implementation review are complete. The code/security/performance and viewport-resume reviews are CLEAN, the two Important accounting findings are corrected, and second-pass `agent://C07TrackerClosureReview` reports CLEAN with no findings. C08 is complete; C09 is the earliest incomplete, next dependency-ready chunk and remains `not started`.
+- **Readiness:** Complete. All three canonical tasks, every acceptance and focused-verification obligation, the implementation/fix commit chain through `ca821f3be26d7eb97ca8a945a8961488c637b255`, sealed terminal evidence, and implementation review are complete. The code/security/performance and viewport-resume reviews are CLEAN, the two Important accounting findings are corrected, and second-pass `agent://C07TrackerClosureReview` reports CLEAN with no findings. C08 and C09 are complete; C10 is the earliest incomplete, next dependency-ready chunk and remains `not started`.
 - [x] Implement the early-autumn morning sun/sky/environment setup, soft readable shadows, ambient fill, and contact grounding across architecture, foliage, paths, and terrain.
   - **Implementation evidence:** The environment factory and controller provide early-morning sky, fill, sun, fog, tone mapping, exposure, and shadow control. Lit materials are used where applicable for architecture, vegetation, details, roads, walls, gates, promenade, and beach. Terrain and sidewalks share the matched beige `MeshLambertMaterial` ground surface with fog enabled, restrained emissive fill, and shadow receiving enabled, preserving continuous visual ownership while participating in lighting and grounding.
   - **Final task evidence:** Terminal `da485…`/`65a869…` all-20 review is CLEAN for attached contact/cast-shadow grounding, readable deep shade and canopies, continuous fog/sky, route hierarchy, and absence of shadow acne or peter-panning across High, Medium, Low, and Reduced.
@@ -328,7 +328,7 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 - **Session/date:** 2026-07-13
 - **Dependencies:** C07 complete
 - **Canonical tasks checked:** 3/3
-- **Readiness:** Complete. All three canonical tasks are checked; acceptance and focused verification have concrete results; full gates are green; `local://c08-evidence/` is SEALED/VALID; final source/test and browser-semantics reviews are CLEAN; and implementation commit `8525d87b3f22fbee258311645924daa14eba2e96` is recorded. The real Pointer Lock route was attempted—not skipped—at 1280×720 and 1920×1080 in headless and fully headed Chromium 150/Xvfb/CDP, but the environment emitted authoritative `pointerlockerror` with null ownership, so successful real lock/locked mouse-look remains explicitly unclaimed; fallback acceptance passed. C09 is now the earliest incomplete, next dependency-ready chunk and remains `not started`.
+- **Readiness:** Complete. All three canonical tasks are checked; acceptance and focused verification have concrete results; full gates are green; `local://c08-evidence/` is SEALED/VALID; final source/test and browser-semantics reviews are CLEAN; and implementation commit `8525d87b3f22fbee258311645924daa14eba2e96` is recorded. The real Pointer Lock route was attempted—not skipped—at 1280×720 and 1920×1080 in headless and fully headed Chromium 150/Xvfb/CDP, but the environment emitted authoritative `pointerlockerror` with null ownership, so successful real lock/locked mouse-look remains explicitly unclaimed; fallback acceptance passed. C09 is complete; C10 is the earliest incomplete, next dependency-ready chunk and remains `not started`.
 - **Exact implementation commit files:** Source — `src/exploration/types.ts`, `src/exploration/InputController.ts`, `src/exploration/PointerLockLook.ts`, `src/exploration/MovementController.ts`, `src/app/AppController.ts`, `src/app/appState.ts`, `src/app/config.ts`, `src/render/frameClock.ts`, `src/render/ThreeRuntime.ts`, `src/ui/AppUI.ts`. Tests — `tests/unit/input.test.ts`, `tests/unit/movement.test.ts`, `tests/unit/appState.test.ts`, `tests/browser/desktopControls.spec.ts`, `tests/browser/lifecycle.spec.ts`. Navigation production code, fixtures, dependencies, and C09+ implementation were not changed.
 - [x] Implement the input action map for WASD physical codes, semantic arrow keys, simultaneous key state, normalized diagonal motion, and delta-time-based walking.
   - **Implementation evidence:** `InputController` implements physical WASD, semantic arrows, alias retention, simultaneous/opposite-key state, normalized axes, one-shot `KeyR`, intentional-key suppression, and held-state clearing. `MovementController` integrates the normalized local movement vector at configured `3.2 m/s` through runtime delta time, while `AppController` owns and transactionally wires input into the sole `ThreeRuntime` animation-loop callback. `tests/unit/input.test.ts` covers mappings, simultaneous aliases/cancellation, normalized diagonals, reset, focus exclusions, and clearing; `tests/unit/movement.test.ts` proves equal 30/60/120 Hz distance and equal axial/diagonal speed.
@@ -366,40 +366,47 @@ A chunk is `complete` only when all three canonical tasks are checked with imple
 
 ## C09 — Add input fallbacks, responsive controls, and accessibility
 
-- **Status:** `not started`
-- **Session/date:** pending
+- **Status:** `complete`
+- **Session/date:** 2026-07-14
 - **Dependencies:** C08 complete
-- **Readiness:** Earliest incomplete, next dependency-ready chunk; `not started`.
-- [ ] Implement click-drag pointer-capture look plus keyboard movement when pointer lock is unavailable or denied, without repeatedly requesting lock.
-  - **Implementation evidence:** pending
-- [ ] Implement touch drag-look and an accessible on-screen movement control for coarse-pointer/no-keyboard devices, including cancellation, orientation, safe-area, and scroll suppression behavior; orientation and VisualViewport changes re-layout controls within the visible viewport and safe areas, preserve camera pose and the current mode unless the browser emits lock loss, and clear held input without resetting the route.
-  - **Implementation evidence:** pending
-- [ ] Complete keyboard-only operation, focus return, visible focus, semantic labels, canvas alternative content, status announcements, zoom/reflow behavior, and reduced-motion handling.
-  - **Implementation evidence:** pending
+- **Canonical tasks checked:** 3/3
+- **Readiness:** Complete. All three canonical tasks, acceptance/focused verification, terminal code/accessibility/visual reviews, manual accessibility QA, full gates, sealed durable evidence, and implementation/fix commit `ca0982231b27d891732f00a9eb5ad96715948ae4` are recorded. C10 is the earliest incomplete, next dependency-ready chunk.
+- **Exact draft implementation files:** `index.html`; `package.json`; `package-lock.json`; `src/app/AppController.ts`; `src/exploration/types.ts`; `src/exploration/InputController.ts`; `src/exploration/DragLook.ts`; `src/exploration/TouchLook.ts`; `src/platform/preferences.ts`; `src/platform/viewport.ts`; `src/ui/AppUI.ts`; `src/ui/styles.css`; `src/ui/touchControls.ts`; `tests/unit/input.test.ts`; `tests/unit/lookFallbacks.test.ts`; `tests/unit/interactionViewport.test.ts`; `tests/browser/fallbackAccessibility.spec.ts`; `tests/browser/desktopControls.spec.ts`; `tests/browser/disclosure.spec.ts`. Dependency `@axe-core/playwright` is pinned at `4.12.1`.
+- **Exact draft API surface:** `MovementAction`; viewport `clear`; exported `InputControllerOptions.onReset`; `InputController.setAction` and `InputController.setIntentionalFocus`; `DragLook`; `TouchLook`; `shouldOfferTouchControls`; `computeInteractionViewport`; `InteractionViewportObserver`; `TouchControls`; `AppUI.focusCanvas`, `AppUI.clearTouchControls`, `AppUI.setInteractionViewport`, and `AppUI.announceReset`; and the `RESET` action.
+- [x] Implement click-drag pointer-capture look plus keyboard movement when pointer lock is unavailable or denied, without repeatedly requesting lock.
+  - **Implementation evidence:** `DragLook` implements pointer-capture fallback and feeds look deltas through the existing exploration path; `InputController` continues normalized keyboard movement. Terminal denial/error/unsupported fallback prevents Resume re-request unless the prior mode had confirmed lock. Browser verification asserts both denial and error → pause → Resume request counts and continued fallback operation.
+- [x] Implement touch drag-look and an accessible on-screen movement control for coarse-pointer/no-keyboard devices, including cancellation, orientation, safe-area, and scroll suppression behavior; orientation and VisualViewport changes re-layout controls within the visible viewport and safe areas, preserve camera pose and the current mode unless the browser emits lock loss, and clear held input without resetting the route.
+  - **Implementation evidence:** `TouchLook`, `TouchControls`, `shouldOfferTouchControls`, `computeInteractionViewport`, and `InteractionViewportObserver` implement touch drag-look, labeled movement, coarse-pointer selection, visible-viewport/safe-area layout, and held-input clearing. Trusted CDP touch proves forward and right local projections separately, captured continuation outside the originating button, outside release clearing active state and stopping movement, and simultaneous two-axis movement plus touch look.
+- [x] Complete keyboard-only operation, focus return, visible focus, semantic labels, canvas alternative content, status announcements, zoom/reflow behavior, and reduced-motion handling.
+  - **Implementation evidence:** `AppUI` focus/reset/announcement APIs, exported `InputControllerOptions.onReset`, the `RESET` action, intentional-focus input handling, semantic canvas/control markup, responsive styles, live-region behavior, and reduced-motion preferences implement the keyboard/accessibility surface. False `aria-keyshortcuts` are removed; native Reset starts from a separately moved pose and asserts restored pose plus a new live mutation. Explicit non-overlap UI slots and CSS layout reflow preserve action/status separation and majority canvas.
 - **PLAN acceptance contract:** exploration remains possible after denied/absent pointer lock and denial/error visibly offers drag + keyboard or touch exploration; drag release outside canvas cannot stick; touch supports look plus movement in portrait/landscape; orientation and VisualViewport changes keep controls visible, preserve camera position/rotation and mode except on confirmed lock loss, and clear held input without resetting the route; keyboard-only users can enter, move, open/close UI, reset, and leave; 200% zoom and 320 px width do not hide actions; reduced-motion removes non-essential motion.
-  - **Acceptance evidence (every clause):** pending
+  - **Acceptance evidence (every clause):** Focused/regression verification exercises denial/error fallback without Resume re-request; outside-release pose stability; required mobile viewports/orientations; VisualViewport resize/scroll with pre-event/immediate/settled pose-yaw-pitch comparison, safe-area tolerance/provenance, cleared held input, and preserved mode/route; keyboard entry/movement/UI/reset/leave with a new reset announcement and restored pose; 320 px/CSS layout reflow; reduced motion and axe. Trusted CDP touch proves separate forward/right contributions, captured continuation outside, release clearing/stopping, and simultaneous both axes plus look. `agent://C09VisualUXReview` is CLEAN across all six states with zero overlaps and majority canvas. `agent://C09ManualAccessibilityQA` is CLEAN for exact focus order, reset live announcement, reflow, touch labels, and reduced motion. Full gates passed and sealed evidence is VALID.
 - **PLAN focused verification contract:** Playwright fallback/accessibility specs; pointer denial with visible fallback copy then drag+keyboard route; keyboard-only full flow; touch emulation at 375×667 and 390×844 in both orientations; during exploration, rotate and resize/scroll VisualViewport and assert control containment, unchanged camera pose/route, preserved mode unless lock loss is emitted, and cleared held input; cancel/multitouch/safe-area scenarios; reduced-motion emulation; automated accessibility scan plus manual focus-order review.
-  - **Focused-verification evidence (every command/scenario):** pending
+  - **Focused-verification evidence (every command/scenario):** Focused fallback on port 49407 passed 10 with 4 intentional capability skips, 0 failures, in 3.1m. Focused evidence includes units 39, disclosure 8/8, desktop controls 7 passed/7 intentional skips, lifecycle 32/32, and viewport 14/14. Manual `agent://C09ManualAccessibilityQA` is CLEAN. Terminal full gates passed: unit 16 files/120 tests; typecheck; production build with 37 modules transformed; browser 105 passed/11 intentional skips/0 failed. An earlier independent fallback timeout is superseded by current passing runs, not a product failure.
 - **PLAN review surface:** gesture conflicts, pointer capture, touch ergonomics, visible fallback and focus/state announcements, orientation/VisualViewport pose-mode preservation, reflow/zoom, alternative description, motion comfort.
-  - **Implementation-review evidence:** pending
+  - **Implementation-review evidence:** Round 1 found `CTRL-001`, `TEST-001`, `A11Y-001`, `A11Y-002`, `ACC-001`, and `VIS-001..003`; Round 2 found `CTRL-002`, `TEST-002..004`, `A11Y-003`, and `VIS-004..005`; Round 3 found `TEST-005`. All fixes are implemented, verified, and committed. Terminal `agent://C09CodeReview` is CLEAN, terminal `agent://C09AccessibilityReview` is CLEAN, `agent://C09VisualUXReview` is CLEAN across all six states, and `agent://C09ManualAccessibilityQA` is CLEAN.
+- **Sealed durable evidence:** `local://c09-evidence` is SEALED/VALID. Manifest checksum `15cfda2d...1075e`, 2,865 bytes, payload 13 files/24,200 bytes, payload digest `1003fe7f...574d0`; inventory checksum `6a578490...cf540`, 2,983 bytes, packet 12 files/21,217 bytes, packet digest `11562505...8f60c`; metrics checksum `395e10...85dd`, 7,626 bytes; source inventory 19 files/264,965 bytes with aggregate digest `2d79a35d...82021` and source manifest digest `940fe296...7c31`.
 - **Planned commit boundary:** `feat: add accessible exploration fallbacks`
-- **Implementation commit hash(es):** pending
+- **Implementation commit hash(es):** `ca0982231b27d891732f00a9eb5ad96715948ae4`
 - **Append-only implementation review and fix/re-review rounds:**
 
 | Round | Finding IDs | Review/fix evidence | Commit | Reviewer/date | Result (`clean` or new finding IDs) |
 |---|---|---|---|---|---|
-| 1 | pending | pending | pending | pending | pending |
+| 1 | `CTRL-001`, `TEST-001`, `A11Y-001`, `A11Y-002`, `ACC-001`, `VIS-001..003` | `agent://C09CodeReview`; `agent://C09AccessibilityReview`; `agent://C09VisualUXReview`; fixes implemented | `ca0982231b27d891732f00a9eb5ad96715948ae4` | independent reviewers / 2026-07-14 | `CTRL-001`, `TEST-001`, `A11Y-001`, `A11Y-002`, `ACC-001`, `VIS-001..003` |
+| 2 | `CTRL-002`, `TEST-002..004`, `A11Y-003`, `VIS-004..005` | Round-2 fixes implemented; focused/regression green; visual CLEAN | `ca0982231b27d891732f00a9eb5ad96715948ae4` | independent reviewers / 2026-07-14 | `CTRL-002`, `TEST-002..004`, `A11Y-003`; visual findings clean |
+| 3 | `TEST-005` | Trusted CDP fix plus fallback 10/4 intentional skips/0 failed in 3.1m | `ca0982231b27d891732f00a9eb5ad96715948ae4` | independent reviewer / 2026-07-14 | `TEST-005` fixed; re-review clean in Round 4 |
+| 4 | none | Terminal `agent://C09CodeReview` CLEAN; `agent://C09AccessibilityReview` CLEAN; `agent://C09VisualUXReview` CLEAN all six states; `agent://C09ManualAccessibilityQA` CLEAN; full gates green; sealed evidence VALID | `ca0982231b27d891732f00a9eb5ad96715948ae4` | independent reviewers / 2026-07-14 | clean |
 
-- **Latest review round is clean:** no
+- **Latest review round is clean:** yes
 - **Blocker:** none
 - **Unblock condition:** none
 ---
-
 ## C10 — Make loading, degradation, and GPU recovery resilient
 
 - **Status:** `not started`
 - **Session/date:** pending
 - **Dependencies:** C09 complete
+- **Readiness:** Earliest incomplete, next dependency-ready chunk; `not started`.
 - [ ] Implement LoadingManager-backed essential/optional asset accounting with honest item progress, indeterminate states, cancellation that exits loading to visible Retry/Return actions and ignores late callbacks, timeout/error classification, and retry.
   - **Implementation evidence:** pending
 - [ ] Define and implement procedural-first fallbacks so optional failures preserve the underlying onboarding/exploration/paused mode with a persistent concise degraded notice and recognizable usable scene, while required failures produce an actionable fatal/static alternative.
@@ -557,9 +564,9 @@ This register may document only a non-complete `blocked` or `deferred by explici
 ### Closure record
 
 - **Overall status:** `in progress`
-- **Canonical implementation tasks checked:** 24/36
+- **Canonical implementation tasks checked:** 27/36
 - **Final-review tasks checked:** 0/5
-- **Chunks complete in strict sequence:** 8/12
+- **Chunks complete in strict sequence:** 9/12
 - **All 12 acceptance contracts fully evidenced:** no
 - **All 12 focused-verification contracts fully evidenced:** no
 - **All 12 implementation reviews latest-round clean:** no
