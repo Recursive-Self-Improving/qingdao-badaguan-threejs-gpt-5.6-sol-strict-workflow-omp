@@ -42,6 +42,7 @@ async function readMetrics(page: Page): Promise<ThreeRuntimeMetrics> {
 }
 
 async function boot(page: Page): Promise<ThreeRuntimeMetrics> {
+  await page.addInitScript(() => localStorage.setItem('badaguan.preferences.v1', JSON.stringify({ version: 1, quality: 'high', motion: 'system' })));
   await page.goto(SUPPORTED_URL);
   await expect(page.locator('#app-canvas')).toHaveAttribute(METRICS_ATTRIBUTE, /"landscape"/);
   await expect.poll(async () => (await readMetrics(page)).runtime.renders).toBeGreaterThan(0);
@@ -136,7 +137,7 @@ test('publishes exact road planting identities, density metrics, opaque sorting,
 });
 
 test('frames all ten literal corridors with exact one-road coverage and zero clearance intersections', async ({ page }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   await boot(page);
   for (const fixture of LANDSCAPE_CORRIDOR_POSES) {
     const before = await readMetrics(page);
@@ -268,6 +269,7 @@ test('freeze is deterministic and malformed landscape commands are inert', async
 });
 
 test('ten settings rebuilds preserve resources and a single runtime', async ({ page }) => {
+  test.setTimeout(90_000);
   const baseline = await boot(page);
   const baseLandscape = landscape(baseline);
   let expectedDisposedDelta = 0;

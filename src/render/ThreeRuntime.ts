@@ -9,6 +9,8 @@ import {
   Vector3,
   SRGBColorSpace,
   WebGLRenderer,
+  Mesh,
+  Texture,
 } from 'three';
 import { APP_CONFIG } from '../app/config';
 import { DEFAULT_CAMERA_RADIUS } from '../exploration/navigation';
@@ -16,6 +18,9 @@ import { ViewportObserver, type ViewportMeasurement } from '../platform/viewport
 import { FrameClock } from './frameClock';
 import { ResourceRegistry, type ResourceRegistryCounts } from './ResourceRegistry';
 import { createWorld } from '../world/createWorld';
+import { qualityProfile, toLandscapeSettings } from '../quality/qualityTiers';
+import type { QualityApplication } from '../quality/QualityController';
+import { Metrics, rendererMetrics as collectRendererMetrics } from '../diagnostics/Metrics';
 import type {
   ArchitectureFrameView,
   ArchitectureSubjectId,
@@ -31,10 +36,6 @@ import type {
 } from '../world/types';
 
 const WORLD_RESOURCE_GROUP_PREFIX = 'world';
-const DEFAULT_LANDSCAPE_SETTINGS: LandscapeSettings = Object.freeze({
-  density: 'high',
-  motion: 'standard',
-});
 
 function circleIntersectsBounds(x: number, z: number, radius: number, bounds: Bounds2): boolean {
   const closestX = Math.max(bounds.minX, Math.min(x, bounds.maxX));
@@ -53,7 +54,9 @@ export interface ThreeRuntimeFrame {
 export interface ThreeRuntimeOptions {
   readonly onUpdate?: (frame: ThreeRuntimeFrame) => void;
   readonly onRender?: (runtime: ThreeRuntime) => void;
+  readonly onPerformanceSample?: (timestampMs: number) => void;
   readonly landscapeSettings?: LandscapeSettings;
+  readonly qualityApplication?: QualityApplication;
 }
 
 export interface ThreeRuntimeMetrics {
@@ -82,6 +85,7 @@ export interface ThreeRuntimeMetrics {
     readonly disposed: number;
     readonly rebuilds: number;
     readonly renders: number;
+    readonly cleanupFailures: number;
   };
   readonly world: WorldRuntimeMetrics;
 }
@@ -194,9 +198,14 @@ export interface WorldNavigationProbe extends NavigationResult {
   readonly requested: Vec2;
 }
 
+interface RendererQualityCapabilities {
+  readonly capabilities?: { getMaxAnisotropy?: () => number };
+}
+
 interface RuntimeViewport {
   readonly measurement: ViewportMeasurement | null;
   start(): void;
+  setLimits?(limits: { renderScale?: number; maxDevicePixelRatio?: number; maxDrawingBufferPixels?: number }): ViewportMeasurement | null;
   dispose(): void;
 }
 
@@ -265,6 +274,9 @@ export class ThreeRuntime {
   };
   private readonly animate = (timestampMs: number): void => {
     if (this.disposed || document.hidden) return;
+    const sampleNow = performance.now();
+    this.options.onPerformanceSample?.(sampleNow);
+    this.diagnosticMetrics?.recordFrame(sampleNow);
     const frame = this.clock.tick(timestampMs);
     this.lastDeltaSeconds = frame.deltaSeconds;
     this.frameCount += 1;
@@ -283,11 +295,15 @@ export class ThreeRuntime {
   private frameCount = 0;
   private renderCount = 0;
   private rebuildCount = 0;
+  private cleanupFailureCount = 0;
   private lastDevelopmentMetricsPublishMs = Number.NEGATIVE_INFINITY;
   private forceDevelopmentMetricsOnNextAnimationTick = false;
+  private developmentMetricsStreaming = true;
   private sceneGeneration = 0;
   private activeResourceGroup: string | null = null;
-  private landscapeSettings: LandscapeSettings = DEFAULT_LANDSCAPE_SETTINGS;
+  private qualityApplication: QualityApplication = Object.freeze({ profile: qualityProfile('high'), motion: 'standard' });
+  private landscapeSettings: LandscapeSettings = Object.freeze({ density: 'high', motion: 'standard' });
+  private readonly diagnosticMetrics = import.meta.env.DEV ? new Metrics() : null;
   private activeLandscapeFrame: ActiveLandscapeFrame | null = null;
   private activeWorld: WorldBuildResult | null = null;
   private lastProbe: WorldNavigationProbe | null = null;
@@ -310,9 +326,11 @@ export class ThreeRuntime {
   ) {
     this.canvas = canvas;
     this.options = options;
-    this.landscapeSettings = Object.freeze({
-      ...(options.landscapeSettings ?? DEFAULT_LANDSCAPE_SETTINGS),
+    this.qualityApplication = options.qualityApplication ?? Object.freeze({
+      profile: qualityProfile(options.landscapeSettings?.density ?? 'high'),
+      motion: options.landscapeSettings?.motion ?? 'standard',
     });
+    this.landscapeSettings = toLandscapeSettings(this.qualityApplication.profile, this.qualityApplication.motion === 'reduced');
     this.dependencies = dependencies === undefined
       ? DEFAULT_DEPENDENCIES
       : { ...DEFAULT_DEPENDENCIES, ...dependencies };
@@ -356,6 +374,7 @@ export class ThreeRuntime {
     this.viewport = viewport;
 
     try {
+      this.viewport.setLimits?.(this.qualityApplication.profile.viewport);
       this.configureRendererAndCamera();
       this.installWorld();
       this.viewport.start();
@@ -383,6 +402,25 @@ export class ThreeRuntime {
     return this.landscapeSettings;
   }
 
+  get currentQuality(): QualityApplication {
+    return this.qualityApplication;
+  }
+
+  applyQuality(next: QualityApplication): void {
+    if (this.disposed) return;
+    const previous = this.qualityApplication;
+    const previousSettings = this.landscapeSettings;
+    try {
+      this.viewport.setLimits?.(next.profile.viewport);
+      this.rebuildScene(toLandscapeSettings(next.profile, next.motion === 'reduced'));
+      this.qualityApplication = next;
+    } catch (error) {
+      this.viewport.setLimits?.(previous.profile.viewport);
+      this.landscapeSettings = previousSettings;
+      throw error;
+    }
+  }
+
   suspend(reason: 'context-lost'): void {
     if (this.disposed || this.suspensionReasons.has(reason)) return;
     this.suspensionReasons.add(reason);
@@ -405,6 +443,7 @@ export class ThreeRuntime {
     const up = this.camera.up;
     return {
       viewport: this.viewport.measurement,
+
       camera: {
         aspect: this.camera.aspect,
         fov: this.camera.fov,
@@ -429,45 +468,72 @@ export class ThreeRuntime {
         disposed: disposedRuntimeCount,
         rebuilds: this.rebuildCount,
         renders: this.renderCount,
+        cleanupFailures: this.cleanupFailureCount,
       },
       world: this.currentWorldMetrics(),
     };
   }
 
+  publishMetricsNow(): void {
+    if (!import.meta.env.DEV) return;
+    this.publishDevelopmentMetrics(true);
+    const frames = this.diagnosticMetrics?.snapshotFrames() ?? null;
+    this.canvas.dataset.qualityMetricsSnapshot = JSON.stringify({
+      timestampMs: performance.now(), quality: this.qualityApplication.profile.tier,
+      frames, validity: this.diagnosticMetrics?.validity ?? { valid: false, reasons: ['diagnostics-unavailable'] },
+      renderer: { ...collectRendererMetrics(this.renderer, this.scene), ...this.graphicsBackendMetrics() },
+      viewport: this.viewport.measurement, resources: this.resources.getCounts(), runtime: this.metrics.runtime,
+    });
+  }
+
+  resetPerformanceMetrics(): void {
+    if (import.meta.env.DEV) this.diagnosticMetrics?.reset(performance.now());
+  }
+
+  setDevelopmentMetricsStreaming(enabled: boolean): void {
+    if (!import.meta.env.DEV || this.disposed) return;
+    this.developmentMetricsStreaming = enabled;
+  }
   rebuildScene(nextSettings: LandscapeSettings = this.landscapeSettings): void {
     if (this.disposed) return;
     const stagedSettings = Object.freeze({ ...nextSettings });
+    const profile = qualityProfile(stagedSettings.density);
     const nextGroup = this.resourceGroup(this.sceneGeneration + 1);
     let nextWorld: WorldBuildResult;
     try {
       nextWorld = this.dependencies.buildWorld(this.resources, nextGroup, stagedSettings);
+      this.configureWorldTextures(nextWorld, profile.textureMaxDimension, profile.anisotropy);
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
-      if (rollbackErrors.length !== 0) {
-        throw new AggregateError([error, ...rollbackErrors], 'Scene rebuild failed during rollback.');
-      }
+      if (rollbackErrors.length !== 0) throw new AggregateError([error, ...rollbackErrors], 'Scene rebuild failed during staging rollback.');
       throw error;
     }
 
     const previousGroup = this.activeResourceGroup;
     const previousWorld = this.activeWorld;
     const previousChildren = [...this.scene.children];
+    const previousBackground = this.scene.background;
+    const previousFog = this.scene.fog;
+    const previousExposure = this.renderer.toneMappingExposure;
     try {
       this.scene.clear();
       this.scene.add(nextWorld.root);
       this.applyWorldEnvironment(nextWorld);
+      this.renderer.shadowMap.needsUpdate = true;
+      this.renderer.render(this.scene, this.camera);
     } catch (error) {
       const rollbackErrors: unknown[] = [];
       this.runCleanupStage(rollbackErrors, () => {
         this.scene.clear();
         this.scene.add(...previousChildren);
+        this.scene.background = previousBackground;
+        this.scene.fog = previousFog;
+        this.renderer.toneMappingExposure = previousExposure;
         this.activeWorld = previousWorld;
       });
       this.runCleanupStage(rollbackErrors, () => this.resources.disposeGroup(nextGroup));
-      if (rollbackErrors.length !== 0) {
-        throw new AggregateError([error, ...rollbackErrors], 'Scene rebuild commit failed during rollback.');
-      }
+      if (rollbackErrors.length !== 0) throw new AggregateError([error, ...rollbackErrors], 'Scene rebuild validation failed during rollback.');
       throw error;
     }
 
@@ -477,17 +543,12 @@ export class ThreeRuntime {
     this.resetDevelopmentFraming(nextWorld);
     this.sceneGeneration += 1;
     this.rebuildCount += 1;
-    const cleanupErrors: unknown[] = [];
-    if (previousGroup !== null) {
-      this.runCleanupStage(cleanupErrors, () => this.resources.disposeGroup(previousGroup));
-    }
-    this.renderer.shadowMap.needsUpdate = true;
-    this.renderer.render(this.scene, this.camera);
     this.renderCount += 1;
-    this.publishDevelopmentMetrics();
-    if (cleanupErrors.length !== 0) {
-      throw new AggregateError(cleanupErrors, 'Scene rebuild committed but previous resources failed to dispose.');
+    if (previousGroup !== null) {
+      try { this.resources.disposeGroup(previousGroup); }
+      catch { this.cleanupFailureCount += 1; this.diagnosticMetrics?.invalidate('quality-cleanup-failure'); }
     }
+    this.publishDevelopmentMetrics();
   }
 
   resetLandscape(): void {
@@ -646,6 +707,17 @@ export class ThreeRuntime {
     return frame;
   }
 
+  setEnvironmentCameraPose(position: readonly [number, number, number], target: readonly [number, number, number]): boolean {
+    if (!import.meta.env.DEV || this.disposed || this.activeWorld === null || ![...position, ...target].every(Number.isFinite)) return false;
+    this.selectDevelopmentFrame('environment');
+    this.activeWorld.debug.setVisible(false);
+    this.activeWorld.debug.setView(null);
+    this.camera.position.set(...position);
+    this.camera.lookAt(...target);
+    this.camera.rotation.z = APP_CONFIG.camera.roll;
+    return true;
+  }
+
   frameEnvironment(viewId: string): ActiveEnvironmentFrame | null {
     if (!import.meta.env.DEV || this.disposed || this.activeWorld === null) return null;
     const view = this.activeWorld.environment.cameraViews.find(({ id }) => id === viewId);
@@ -733,6 +805,7 @@ export class ThreeRuntime {
       this.applyWorldEnvironment(world);
       this.activeWorld = world;
       const spawn = world.navigation.spawn;
+      this.configureWorldTextures(world, this.qualityApplication.profile.textureMaxDimension, this.qualityApplication.profile.anisotropy);
       this.resetDevelopmentFraming(world);
       this.camera.position.set(
         spawn.x,
@@ -796,7 +869,48 @@ export class ThreeRuntime {
       disposedRuntimeCount += 1;
       this.countedAsDisposed = true;
     }
-    if (import.meta.env.DEV) delete this.canvas.dataset.threeRuntimeMetrics;
+    if (import.meta.env.DEV) {
+      delete this.canvas.dataset.threeRuntimeMetrics;
+      delete this.canvas.dataset.qualityMetricsSnapshot;
+    }
+  }
+
+  private configureWorldTextures(world: WorldBuildResult, maxDimension: number, targetAnisotropy: number): void {
+    const textures = new Map<string, Texture>();
+    if (world.environment.backgroundTexture instanceof Texture) textures.set(world.environment.backgroundTexture.uuid, world.environment.backgroundTexture);
+    world.root.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        for (const value of Object.values(material)) if (value instanceof Texture) textures.set(value.uuid, value);
+      }
+    });
+    const capabilities = (this.renderer as unknown as RendererQualityCapabilities).capabilities;
+    const supportedAnisotropy = capabilities?.getMaxAnisotropy?.() ?? 1;
+    for (const texture of textures.values()) {
+      const images = Array.isArray(texture.image) ? texture.image : [texture.image];
+      for (const image of images) {
+        const dimensions = image as { width?: number; height?: number; depth?: number } | null | undefined;
+        if (Number(dimensions?.width ?? 0) > maxDimension || Number(dimensions?.height ?? 0) > maxDimension || Number(dimensions?.depth ?? 0) > maxDimension) {
+          throw new RangeError(`Texture "${texture.name || texture.uuid}" exceeds the ${maxDimension}px ${world.landscape.settings.density} quality ceiling.`);
+        }
+      }
+      texture.anisotropy = Math.min(targetAnisotropy, supportedAnisotropy);
+      texture.needsUpdate = true;
+    }
+  }
+
+  private graphicsBackendMetrics(): Readonly<{ backend: 'webgl2'; graphicsRenderer: string | null; graphicsVendor: string | null; acceleration: 'hardware' | 'software' | 'unknown' }> {
+    const renderer = this.renderer as WebGLRenderer & { getContext?: () => WebGL2RenderingContext };
+    try {
+      const context = renderer.getContext?.();
+      if (context === undefined) return Object.freeze({ backend: 'webgl2', graphicsRenderer: null, graphicsVendor: null, acceleration: 'unknown' });
+      const debug = context.getExtension('WEBGL_debug_renderer_info');
+      const graphicsRenderer = debug === null ? null : String(context.getParameter(debug.UNMASKED_RENDERER_WEBGL));
+      const graphicsVendor = debug === null ? null : String(context.getParameter(debug.UNMASKED_VENDOR_WEBGL));
+      const acceleration = graphicsRenderer === null ? 'unknown' : /SwiftShader|llvmpipe|Software|Mesa OffScreen/i.test(graphicsRenderer) ? 'software' : 'hardware';
+      return Object.freeze({ backend: 'webgl2', graphicsRenderer, graphicsVendor, acceleration });
+    } catch { return Object.freeze({ backend: 'webgl2', graphicsRenderer: null, graphicsVendor: null, acceleration: 'unknown' }); }
   }
 
   private applyWorldEnvironment(world: WorldBuildResult): void {
@@ -953,7 +1067,7 @@ export class ThreeRuntime {
 
   private publishDevelopmentMetrics(force = true, timestampMs = performance.now()): void {
     if (!import.meta.env.DEV || this.disposed || !this.countedAsCreated) return;
-    if (!force && timestampMs - this.lastDevelopmentMetricsPublishMs < 100) return;
+    if (!force && (!this.developmentMetricsStreaming || timestampMs - this.lastDevelopmentMetricsPublishMs < 100)) return;
     this.lastDevelopmentMetricsPublishMs = timestampMs;
     this.canvas.dataset.threeRuntimeMetrics = JSON.stringify(this.metrics);
   }

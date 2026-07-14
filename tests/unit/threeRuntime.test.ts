@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { Group, PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
+import { BoxGeometry, DataTexture, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 
 import { APP_CONFIG } from '../../src/app/config';
 import { AppController, installPageHideHandler } from '../../src/app/AppController';
@@ -7,6 +7,7 @@ import {
   ThreeRuntime,
   type ThreeRuntimeDependencies,
 } from '../../src/render/ThreeRuntime';
+import { QUALITY_PROFILES } from '../../src/quality/qualityTiers';
 import type { DisposableResource } from '../../src/render/ResourceRegistry';
 import { DISTRICT_DATA } from '../../src/world/districtData';
 import type {
@@ -26,18 +27,20 @@ interface RendererDouble {
   readonly shadowMap: { enabled: boolean; type: unknown; autoUpdate: boolean; needsUpdate: boolean };
   readonly setAnimationLoop: Mock<(callback: FrameRequestCallback | null) => void>;
   readonly render: Mock<(...args: unknown[]) => void>;
+  readonly info: { readonly render: { calls: number; triangles: number }; readonly memory: { geometries: number; textures: number }; readonly programs: readonly unknown[] };
+  readonly capabilities: { readonly getMaxAnisotropy: Mock<() => number> };
   readonly dispose: Mock<() => void>;
-  readonly info: { readonly render: { calls: number; triangles: number } };
 }
 
 interface ViewportDouble {
   readonly measurement: null;
   readonly start: Mock<() => void>;
+  readonly setLimits: Mock<(limits: { renderScale?: number; maxDevicePixelRatio?: number; maxDrawingBufferPixels?: number }) => null>;
   readonly dispose: Mock<() => void>;
 }
 
 function createRenderer(): RendererDouble {
-  const info = { render: { calls: 0, triangles: 0 } };
+  const info = { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 }, programs: [] };
   const shadowMap = { enabled: false, type: null, autoUpdate: true, needsUpdate: false };
   return {
     outputColorSpace: null,
@@ -51,12 +54,13 @@ function createRenderer(): RendererDouble {
       shadowMap.needsUpdate = false;
     }),
     info,
+    capabilities: { getMaxAnisotropy: vi.fn(() => 6) },
     dispose: vi.fn(),
   };
 }
 
 function createViewport(): ViewportDouble {
-  return { measurement: null, start: vi.fn(), dispose: vi.fn() };
+  return { measurement: null, start: vi.fn(), setLimits: vi.fn(() => null), dispose: vi.fn() };
 }
 
 function disposable(dispose: () => void = vi.fn()): DisposableResource {
@@ -198,8 +202,15 @@ function worldBuild(settings: LandscapeSettings = Object.freeze({ density: 'high
       reset: DISTRICT_DATA.reset,
     },
     recipe: { id: 'badaguan-district-procedural', version: 1 },
+
     degradationNotices: [],
   };
+}
+
+function texturedWorld(settings: LandscapeSettings, texture: DataTexture): WorldBuildResult {
+  const world = worldBuild(settings);
+  world.root.add(new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial({ map: texture })));
+  return { ...world, environment: { ...world.environment, backgroundTexture: texture } };
 }
 
 
@@ -359,7 +370,7 @@ describe('ThreeRuntime lifecycle safety', () => {
     runtime.dispose();
   });
 
-  it('renders a committed rebuild generation before publishing its distinct renderer stats', () => {
+  it('validation-renders a staged rebuild before committing and publishing its renderer stats', () => {
     const renderer = createRenderer();
     const viewport = createViewport();
     const initial = worldBuild();
@@ -400,10 +411,11 @@ describe('ThreeRuntime lifecycle safety', () => {
 
     expect(renderObservations).toEqual([{
       child: rebuilt.root,
-      committedWorld: rebuilt,
+      committedWorld: initial,
       publishedMetrics: publishedBeforeRebuild,
       shadowRefreshRequested: true,
     }]);
+    expect(runtime.worldBuildResult).toBe(rebuilt);
     expect(runtime.metrics.runtime.renders).toBe(rendersBeforeRebuild + 1);
     expect(runtime.metrics.world.architecture?.renderInfo).toEqual({ calls: 2, triangles: 345 });
     expect(runtime.metrics.world.landscape?.renderInfo).toEqual({ calls: 2, triangles: 345 });
@@ -926,6 +938,102 @@ describe('ThreeRuntime lifecycle safety', () => {
     expect(viewport.dispose).toHaveBeenCalledTimes(1);
     expect(renderer.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it('rolls back scene, environment, viewport limits, and staged resources when validation render fails', () => {
+    const renderer = createRenderer(); const viewport = createViewport();
+    const initial = worldBuild(); const staged = worldBuild(Object.freeze({ density: 'low', motion: 'standard' }));
+    const stagedDispose = vi.fn(); let builds = 0;
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, (resources, group) => {
+      builds += 1;
+      if (builds === 1) return initial;
+      resources.register(disposable(stagedDispose), group);
+      return staged;
+    }));
+    const background = runtime.scene.background; const fog = runtime.scene.fog; const exposure = renderer.toneMappingExposure;
+    renderer.render.mockImplementationOnce(() => { throw new Error('forced validation render failure'); });
+    expect(() => runtime.applyQuality({ profile: QUALITY_PROFILES.low, motion: 'standard' })).toThrow('forced validation render failure');
+    expect(runtime.worldBuildResult).toBe(initial); expect(runtime.scene.children).toEqual([initial.root]);
+    expect(runtime.scene.background).toBe(background); expect(runtime.scene.fog).toBe(fog); expect(renderer.toneMappingExposure).toBe(exposure);
+    expect(runtime.currentQuality.profile.tier).toBe('high'); expect(stagedDispose).toHaveBeenCalledTimes(1);
+    expect(viewport.setLimits).toHaveBeenLastCalledWith(QUALITY_PROFILES.high.viewport);
+    runtime.dispose();
+  });
+
+  it('keeps committed quality when old-group disposal fails and records cleanup diagnostics', () => {
+    const renderer = createRenderer(); const viewport = createViewport(); let builds = 0;
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, (resources, group) => {
+      builds += 1;
+      resources.register(disposable(builds === 1 ? () => { throw new Error('forced old disposal failure'); } : vi.fn()), group);
+      return worldBuild(builds === 1 ? Object.freeze({ density: 'high', motion: 'standard' }) : Object.freeze({ density: 'low', motion: 'standard' }));
+    }));
+    expect(() => runtime.applyQuality({ profile: QUALITY_PROFILES.low, motion: 'standard' })).not.toThrow();
+    expect(runtime.currentQuality.profile.tier).toBe('low');
+    expect(runtime.worldBuildResult?.landscape.settings.density).toBe('low');
+    expect(runtime.metrics.runtime.cleanupFailures).toBe(1);
+    runtime.dispose();
+  });
+
+  it('applies capability-capped anisotropy on every texture seam and rejects oversized staged textures', () => {
+    const renderer = createRenderer(); const viewport = createViewport(); let builds = 0;
+    const highTexture = new DataTexture(new Uint8Array(64), 4, 4); const lowTexture = new DataTexture(new Uint8Array(64), 4, 4);
+    const oversized = new DataTexture(new Uint8Array(2049 * 4), 2049, 1);
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => {
+      builds += 1;
+      if (builds === 1) return texturedWorld(Object.freeze({ density: 'high', motion: 'standard' }), highTexture);
+      if (builds === 2) return texturedWorld(Object.freeze({ density: 'low', motion: 'standard' }), lowTexture);
+      return texturedWorld(Object.freeze({ density: 'low', motion: 'standard' }), oversized);
+    }));
+    expect(highTexture.anisotropy).toBe(6);
+    runtime.applyQuality({ profile: QUALITY_PROFILES.low, motion: 'standard' });
+    expect(lowTexture.anisotropy).toBe(2);
+    expect(() => runtime.applyQuality({ profile: QUALITY_PROFILES.low, motion: 'standard' })).toThrow(/1024px low quality ceiling/);
+    expect(runtime.currentQuality.profile.tier).toBe('low'); expect(runtime.worldBuildResult?.environment.backgroundTexture).toBe(lowTexture);
+    runtime.dispose();
+  });
+  it('suppresses periodic metrics streaming while forced snapshots remain synchronous and re-enables cleanly', () => {
+    let metricsWrites = 0;
+    const values = {} as DOMStringMap;
+    Object.defineProperty(canvas, 'dataset', { configurable: true, value: new Proxy(values, {
+      set: (target, property, value) => {
+        if (property === 'threeRuntimeMetrics') metricsWrites += 1;
+        return Reflect.set(target, property, value);
+      },
+    }) });
+    const renderer = createRenderer(); const viewport = createViewport();
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => worldBuild()));
+    const callback = renderer.setAnimationLoop.mock.calls.at(-1)?.[0];
+    if (callback === null || callback === undefined) throw new Error('Missing animation callback.');
+    const constructionWrites = metricsWrites;
+    runtime.setDevelopmentMetricsStreaming(false);
+    callback(1_000);
+    expect(runtime.metrics.frame.frameCount).toBe(1);
+    expect(metricsWrites).toBe(constructionWrites);
+    runtime.publishMetricsNow();
+    expect(canvas.dataset.qualityMetricsSnapshot).toBeDefined();
+    expect(metricsWrites).toBe(constructionWrites + 1);
+    callback(1_200);
+    expect(metricsWrites).toBe(constructionWrites + 1);
+    runtime.setDevelopmentMetricsStreaming(true);
+    callback(performance.now() + 1_000);
+    expect(metricsWrites).toBe(constructionWrites + 2);
+    runtime.dispose();
+  });
+
+  it('moves to a camera-only environment pose without rendering or publishing until the normal loop', () => {
+    const renderer = createRenderer(); const viewport = createViewport();
+    const runtime = new ThreeRuntime(canvas, {}, dependencies(renderer, viewport, () => worldBuild()));
+    const callback = renderer.setAnimationLoop.mock.calls.at(-1)?.[0];
+    if (callback === null || callback === undefined) throw new Error('Missing animation callback.');
+    const renders = renderer.render.mock.calls.length; const published = canvas.dataset.threeRuntimeMetrics;
+    expect(runtime.setEnvironmentCameraPose([4, 5, 6], [8, 5, -12])).toBe(true);
+    expect(runtime.camera.position.toArray()).toEqual([4, 5, 6]);
+    expect(renderer.render).toHaveBeenCalledTimes(renders);
+    expect(canvas.dataset.threeRuntimeMetrics).toBe(published);
+    callback(1_000);
+    expect(renderer.render).toHaveBeenCalledTimes(renders + 1);
+    runtime.dispose();
+  });
+
 
   it('keeps BFCache pagehide wiring live but destroys a real unload', () => {
     const destroy = vi.fn();

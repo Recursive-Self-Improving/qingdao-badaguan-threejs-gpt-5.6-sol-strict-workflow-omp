@@ -14,12 +14,15 @@ export interface ViewportCameraTarget {
 export interface ViewportMeasurement {
   cssWidth: number;
   cssHeight: number;
+  requestedPixelRatio: number;
   pixelRatio: number;
   bufferWidth: number;
   bufferHeight: number;
+  bufferPixels: number;
 }
 
 export interface ViewportLimits {
+  renderScale?: number;
   maxDevicePixelRatio?: number;
   maxDrawingBufferPixels?: number;
 }
@@ -55,7 +58,7 @@ export function computeViewport(
     DEFAULT_MAX_DRAWING_BUFFER_PIXELS,
   );
   const requestedPixelRatio = Math.min(
-    positiveFinite(devicePixelRatio, 1),
+    positiveFinite(devicePixelRatio, 1) * positiveFinite(limits.renderScale ?? 1, 1),
     maxDevicePixelRatio,
   );
   const pixelRatio = Math.min(
@@ -68,9 +71,11 @@ export function computeViewport(
   return {
     cssWidth: width,
     cssHeight: height,
+    requestedPixelRatio,
     pixelRatio,
     bufferWidth,
     bufferHeight,
+    bufferPixels: bufferWidth * bufferHeight,
   };
 }
 
@@ -81,9 +86,11 @@ function measurementsEqual(
   return left !== null &&
     left.cssWidth === right.cssWidth &&
     left.cssHeight === right.cssHeight &&
+    left.requestedPixelRatio === right.requestedPixelRatio &&
     left.pixelRatio === right.pixelRatio &&
     left.bufferWidth === right.bufferWidth &&
-    left.bufferHeight === right.bufferHeight;
+    left.bufferHeight === right.bufferHeight &&
+    left.bufferPixels === right.bufferPixels;
 }
 
 function hasResizeObserver(target: Window): target is Window & { ResizeObserver: typeof ResizeObserver } {
@@ -96,7 +103,7 @@ export class ViewportObserver {
   readonly #camera: ViewportCameraTarget;
   readonly #window: Window;
   readonly #ResizeObserver: typeof ResizeObserver | undefined;
-  readonly #limits: ViewportLimits;
+  #limits: ViewportLimits;
   readonly #onChange: ((measurement: ViewportMeasurement) => void) | undefined;
   readonly #handleViewportChange = (): void => {
     this.update();
@@ -118,12 +125,9 @@ export class ViewportObserver {
     this.#ResizeObserver = options.ResizeObserver ??
       (hasResizeObserver(this.#window) ? this.#window.ResizeObserver : undefined);
     this.#limits = {
-      ...(options.maxDevicePixelRatio === undefined
-        ? {}
-        : { maxDevicePixelRatio: options.maxDevicePixelRatio }),
-      ...(options.maxDrawingBufferPixels === undefined
-        ? {}
-        : { maxDrawingBufferPixels: options.maxDrawingBufferPixels }),
+      ...(options.renderScale === undefined ? {} : { renderScale: options.renderScale }),
+      ...(options.maxDevicePixelRatio === undefined ? {} : { maxDevicePixelRatio: options.maxDevicePixelRatio }),
+      ...(options.maxDrawingBufferPixels === undefined ? {} : { maxDrawingBufferPixels: options.maxDrawingBufferPixels }),
     };
     this.#onChange = options.onChange;
   }
@@ -144,6 +148,11 @@ export class ViewportObserver {
     this.#window.visualViewport?.addEventListener('resize', this.#handleViewportChange);
     this.#window.visualViewport?.addEventListener('scroll', this.#handleViewportChange);
     this.update();
+  }
+
+  setLimits(limits: ViewportLimits): ViewportMeasurement | null {
+    this.#limits = { ...limits };
+    return this.update();
   }
 
   update(): ViewportMeasurement | null {

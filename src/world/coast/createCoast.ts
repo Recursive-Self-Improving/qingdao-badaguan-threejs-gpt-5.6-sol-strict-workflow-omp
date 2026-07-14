@@ -17,6 +17,7 @@ import {
 import { sampleGroundHeight } from '../../exploration/navigation';
 import type { ResourceRegistry } from '../../render/ResourceRegistry';
 import { DISTRICT_DATA } from '../districtData';
+import { qualityProfile } from '../../quality/qualityTiers';
 import type {
   AtmosphereConfig,
   CoastController,
@@ -334,7 +335,7 @@ export function createCoast(
   root.name = 'coast';
   root.userData.collidable = false;
   root.userData.horizonLayer = 'fogged-water-extension';
-  const quality = config.quality[settings.density];
+  const profile = qualityProfile(settings.density);
   const coast = config.coast;
   if (!(coast.horizonFadeStart > 0 && coast.horizonFadeEnd > coast.horizonFadeStart)) {
     throw new RangeError('Coast horizon fade must have a positive, ordered view-depth range.');
@@ -378,7 +379,7 @@ export function createCoast(
   beach.name = 'coast:restrained-beach';
   beach.position.y = baseY;
   root.add(beach);
-  const waterGeometry = resources.register(createWaterGeometry(shoreline, waterEndZ, quality.waterSegments), group);
+  const waterGeometry = resources.register(createWaterGeometry(shoreline, waterEndZ, profile.water.segments), group);
   const waterMaterial = resources.register(new ShaderMaterial({
     toneMapped: false,
     uniforms: {
@@ -424,9 +425,7 @@ export function createCoast(
   screen.instanceMatrix.needsUpdate = true;
   root.add(screen);
 
-  const amplitude = settings.density === 'low' || settings.motion === 'reduced'
-    ? coast.reducedMotionAmplitude
-    : coast.standardMotionAmplitude;
+  const amplitude = settings.motion === 'reduced' ? 0 : profile.water.motionAmplitude;
   let captureTime: number | null = null;
   const applyMotion = (time: number): void => {
     water.position.y = baseY + (amplitude === 0 ? 0 : Math.sin(time * 0.41) * amplitude * 0.18);
@@ -444,7 +443,7 @@ export function createCoast(
         waterMotionAmplitude: amplitude,
         waterTransformChecksum: checksum(water.rotation.z + water.position.y),
         waterStaticDetailStrength: coast.staticDetailStrength,
-        waterSegments: quality.waterSegments,
+        waterSegments: profile.water.segments,
         horizonFadeStart: coast.horizonFadeStart,
         horizonFadeEnd: coast.horizonFadeEnd,
         shoreBlendDistance: coast.shoreBlendDistance,
@@ -459,6 +458,7 @@ export function createCoast(
     },
     update(frame: LandscapeUpdateFrame): void {
       if (!Number.isFinite(frame.elapsedSeconds) || frame.elapsedSeconds < 0) return;
+      if (amplitude === 0 && captureTime === null) return;
       applyMotion(captureTime ?? frame.elapsedSeconds);
     },
     reset(): void {

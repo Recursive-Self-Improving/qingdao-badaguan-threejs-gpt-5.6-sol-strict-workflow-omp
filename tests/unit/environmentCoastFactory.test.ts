@@ -1,8 +1,9 @@
 import { BufferGeometry, DataTexture, DirectionalLight, HemisphereLight, InstancedMesh, Mesh, MeshLambertMaterial, ShaderMaterial, Vector3 } from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { APP_CONFIG, ATMOSPHERE_CONFIG } from '../../src/app/config';
 import { ResourceRegistry } from '../../src/render/ResourceRegistry';
+import { QUALITY_PROFILES } from '../../src/quality/qualityTiers';
 import { createCoast } from '../../src/world/coast/createCoast';
 import { DISTRICT_DATA } from '../../src/world/districtData';
 import { createEnvironment } from '../../src/world/environment/createEnvironment';
@@ -17,10 +18,6 @@ const INJECTED_ATMOSPHERE: AtmosphereConfig = Object.freeze({
   ...ATMOSPHERE_CONFIG,
   sky: Object.freeze({ ...ATMOSPHERE_CONFIG.sky, horizon: 0x123456 }),
   fog: Object.freeze({ color: 0xfedcba, near: 19, far: 87 }),
-  quality: Object.freeze({
-    ...ATMOSPHERE_CONFIG.quality,
-    high: Object.freeze({ ...ATMOSPHERE_CONFIG.quality.high, shadowMapSize: 512, waterSegments: 4 }),
-  }),
   coast: Object.freeze({
     ...ATMOSPHERE_CONFIG.coast,
     horizonColor: 0xe12a8f,
@@ -57,21 +54,22 @@ describe('C07 environment and coast factories', () => {
     expect(ATMOSPHERE_CONFIG.coast.horizonFadeEnd).toBeLessThan(APP_CONFIG.camera.far);
     expect(ATMOSPHERE_CONFIG.coast.shoreBlendDistance).toBeGreaterThan(0);
     expect(ATMOSPHERE_CONFIG.fog.near).toBeGreaterThan(60);
-    expect(ATMOSPHERE_CONFIG.quality.high.shadowMapSize).toBeGreaterThan(ATMOSPHERE_CONFIG.quality.medium.shadowMapSize);
-    expect(ATMOSPHERE_CONFIG.quality.medium.shadowMapSize).toBeGreaterThan(ATMOSPHERE_CONFIG.quality.low.shadowMapSize);
-    for (const quality of Object.values(ATMOSPHERE_CONFIG.quality)) {
-      expect(quality.exposure).toBeGreaterThanOrEqual(1);
-      expect(quality.exposure).toBeLessThanOrEqual(1.1);
-      expect(quality.fogNearMultiplier).toBeGreaterThan(0);
-      expect(quality.fogFarMultiplier).toBeGreaterThan(0);
-      expect(quality.ambientMultiplier).toBeGreaterThan(0);
-      expect(quality.shadowBias).toBeLessThanOrEqual(0);
-      expect(Math.abs(quality.shadowBias)).toBeLessThan(0.001);
-      expect(quality.shadowNormalBias).toBeGreaterThan(0);
-      expect(quality.shadowNormalBias).toBeLessThan(0.03);
+    expect(QUALITY_PROFILES.low.shadows.mapSize).toBe(1024);
+    expect(QUALITY_PROFILES.medium.shadows.mapSize).toBe(2048);
+    expect(QUALITY_PROFILES.high.shadows.mapSize).toBe(2048);
+    for (const profile of Object.values(QUALITY_PROFILES)) {
+      expect(profile.environment.exposure).toBeGreaterThanOrEqual(1);
+      expect(profile.environment.exposure).toBeLessThanOrEqual(1.1);
+      expect(profile.environment.fogNearMultiplier).toBeGreaterThan(0);
+      expect(profile.environment.fogFarMultiplier).toBeGreaterThan(0);
+      expect(profile.environment.ambientMultiplier).toBeGreaterThan(0);
+      expect(profile.environment.shadowBias).toBeLessThanOrEqual(0);
+      expect(Math.abs(profile.environment.shadowBias)).toBeLessThan(0.001);
+      expect(profile.environment.shadowNormalBias).toBeGreaterThan(0);
+      expect(profile.environment.shadowNormalBias).toBeLessThan(0.03);
     }
-    expect(ATMOSPHERE_CONFIG.fog.far * ATMOSPHERE_CONFIG.quality.low.fogFarMultiplier)
-      .toBeGreaterThan(ATMOSPHERE_CONFIG.fog.far * ATMOSPHERE_CONFIG.quality.high.fogFarMultiplier);
+    expect(ATMOSPHERE_CONFIG.fog.far * QUALITY_PROFILES.low.environment.fogFarMultiplier)
+      .toBeGreaterThan(ATMOSPHERE_CONFIG.fog.far * QUALITY_PROFILES.high.environment.fogFarMultiplier);
   });
 
   it('creates soft sun and fill lights with quality-aware shadow calibration and no leaked resources', () => {
@@ -84,9 +82,15 @@ describe('C07 environment and coast factories', () => {
     expect(fill).toBeInstanceOf(HemisphereLight);
     expect((sun as DirectionalLight).castShadow).toBe(true);
     expect((sun as DirectionalLight).shadow.mapSize.toArray()).toEqual([2048, 2048]);
-    expect((sun as DirectionalLight).shadow.bias).toBe(ATMOSPHERE_CONFIG.quality.high.shadowBias);
-    expect((sun as DirectionalLight).shadow.normalBias).toBe(ATMOSPHERE_CONFIG.quality.high.shadowNormalBias);
-    expect((fill as HemisphereLight).intensity).toBeCloseTo(1.42 * ATMOSPHERE_CONFIG.quality.high.ambientMultiplier);
+    const highSunDispose = vi.spyOn(sun as DirectionalLight, 'dispose');
+    const highFillDispose = vi.spyOn(fill as HemisphereLight, 'dispose');
+    const lowSun = low.root.getObjectByName('environment:morning-sun') as DirectionalLight;
+    const lowFill = low.root.getObjectByName('environment:hemisphere-fill') as HemisphereLight;
+    const lowSunDispose = vi.spyOn(lowSun, 'dispose');
+    const lowFillDispose = vi.spyOn(lowFill, 'dispose');
+    expect((sun as DirectionalLight).shadow.bias).toBe(QUALITY_PROFILES.high.environment.shadowBias);
+    expect((sun as DirectionalLight).shadow.normalBias).toBe(QUALITY_PROFILES.high.environment.shadowNormalBias);
+    expect((fill as HemisphereLight).intensity).toBeCloseTo(1.42 * QUALITY_PROFILES.high.environment.ambientMultiplier);
     const sky = high.backgroundTexture as DataTexture;
     const skyData = sky.image.data as Uint8Array;
     expect(high.metrics.skyGradientRows).toBe(256);
@@ -111,7 +115,7 @@ describe('C07 environment and coast factories', () => {
     }
     expect(longestIdenticalRun).toBeLessThan(16);
     expect(high.metrics).toMatchObject({ quality: 'high', motion: 'standard', fogNear: 80, fogFar: 380, shadowMapSize: 2048, contactGrounding: true });
-    expect(low.metrics).toMatchObject({ quality: 'low', motion: 'reduced', fogNear: 108, shadowMapSize: 512, contactGrounding: true });
+    expect(low.metrics).toMatchObject({ quality: 'low', motion: 'reduced', fogNear: 108, shadowMapSize: 1024, contactGrounding: true });
     expect(low.metrics.fogFar).toBeCloseTo(437);
     expect(low.metrics.ambientIntensity).toBeGreaterThan(high.metrics.ambientIntensity);
     expect(high.metrics.sunDirection[1]).toBeLessThan(0);
@@ -119,6 +123,10 @@ describe('C07 environment and coast factories', () => {
     resources.disposeGroup('environment-high');
     resources.disposeGroup('environment-low');
     expect(resources.getCounts()).toMatchObject({ resources: 0, references: 0, groups: 0 });
+    expect(highSunDispose).toHaveBeenCalledTimes(1);
+    expect(highFillDispose).toHaveBeenCalledTimes(1);
+    expect(lowSunDispose).toHaveBeenCalledTimes(1);
+    expect(lowFillDispose).toHaveBeenCalledTimes(1);
   });
 
   it('shares one fogged lit ground material across shadow-receiving terrain and sidewalks', () => {
@@ -222,12 +230,15 @@ describe('C07 environment and coast factories', () => {
     const reduced = createCoast(resources, 'coast-reduced', LOW_REDUCED, DISTRICT_DATA, ATMOSPHERE_CONFIG);
     const standardInitial = standard.metrics.waterTransformChecksum;
     const reducedInitial = reduced.metrics.waterTransformChecksum;
+    const reducedWater = reduced.root.getObjectByName('coast:water') as Mesh;
+    const reducedUpdateMatrix = vi.spyOn(reducedWater, 'updateMatrix');
     standard.update({ elapsedSeconds: 7.25, deltaSeconds: 1 / 60 });
     reduced.update({ elapsedSeconds: 7.25, deltaSeconds: 1 / 60 });
     expect(standard.metrics.waterMotionAmplitude).toBeGreaterThan(0);
     expect(standard.metrics.waterTransformChecksum).not.toBe(standardInitial);
     expect(reduced.metrics.waterMotionAmplitude).toBe(0);
     expect(reduced.metrics.waterTransformChecksum).toBe(reducedInitial);
+    expect(reducedUpdateMatrix).not.toHaveBeenCalled();
     standard.setCaptureTime(7.25);
     const frozen = standard.metrics.waterTransformChecksum;
     standard.update({ elapsedSeconds: 12, deltaSeconds: 1 / 60 });
@@ -251,7 +262,7 @@ describe('C07 environment and coast factories', () => {
 
     expect(environment.config).toBe(INJECTED_ATMOSPHERE);
     expect(environment).toMatchObject({ backgroundColor: 0x123456, fogColor: 0xfedcba, fogNear: 19, fogFar: 87 });
-    expect(environment.metrics).toMatchObject({ shadowMapSize: 512, fogNear: 19, fogFar: 87 });
+    expect(environment.metrics).toMatchObject({ shadowMapSize: 2048, fogNear: 19, fogFar: 87 });
     const water = standard.root.getObjectByName('coast:water') as Mesh<BufferGeometry, ShaderMaterial>;
     expect(standard.config).toBe(INJECTED_ATMOSPHERE);
     expect((water.material.uniforms.horizonColor?.value as Vector3).toArray()).toEqual([
@@ -285,9 +296,9 @@ describe('C07 environment and coast factories', () => {
     expect(water.material.uniforms.horizonFadeStart?.value).toBe(65);
     expect(water.material.uniforms.horizonFadeEnd?.value).toBe(410);
     expect(water.material.uniforms.staticDetailStrength?.value).toBe(0.19);
-    expect(water.geometry.userData.depthSegments).toBe(4);
-    expect(standard.metrics).toMatchObject({ waterSegments: 4, waterMotionAmplitude: 0.111, waterStaticDetailStrength: 0.19, horizonFadeStart: 65, horizonFadeEnd: 410, shoreBlendDistance: 9.5, shoreFoamStart: 0.8, shoreFoamEnd: 2.2 });
-    expect(reduced.metrics.waterMotionAmplitude).toBe(0.027);
+    expect(water.geometry.userData.depthSegments).toBe(8);
+    expect(standard.metrics).toMatchObject({ waterSegments: 8, waterMotionAmplitude: 0.018, waterStaticDetailStrength: 0.19, horizonFadeStart: 65, horizonFadeEnd: 410, shoreBlendDistance: 9.5, shoreFoamStart: 0.8, shoreFoamEnd: 2.2 });
+    expect(reduced.metrics.waterMotionAmplitude).toBe(0);
     resources.disposeAll();
   });
 });

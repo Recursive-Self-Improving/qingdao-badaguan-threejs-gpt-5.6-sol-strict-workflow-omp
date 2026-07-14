@@ -11,6 +11,9 @@ import type { MovementAction } from '../exploration/types';
 import type { InteractionViewportMeasurement } from '../platform/viewport';
 import { TouchControls } from './touchControls';
 import type { RouteGuide } from '../loading/routeGuide';
+import type { MotionPreference, QualityPreference } from '../quality/qualityTiers';
+import type { QualityState } from '../quality/QualityController';
+import { AnnouncementBroker } from './AnnouncementBroker';
 
 export type AppUIAction = Extract<
   AppEvent,
@@ -26,7 +29,9 @@ export type AppUIAction = Extract<
       | 'OPEN_PANEL'
       | 'CLOSE_PANEL';
   }
-> | { readonly type: 'RESET' } | { readonly type: 'CANCEL_LOADING' };
+> | { readonly type: 'RESET' } | { readonly type: 'CANCEL_LOADING' }
+  | { readonly type: 'QUALITY_PREFERENCE_CHANGED'; readonly preference: QualityPreference }
+  | { readonly type: 'MOTION_PREFERENCE_CHANGED'; readonly preference: MotionPreference };
 
 export type AppUIActionHandler = (action: AppUIAction) => void;
 
@@ -38,6 +43,7 @@ export interface AppUIProjection {
 export interface AppUIOptions {
   readonly onAction: AppUIActionHandler;
   readonly preferences: PreferenceSnapshot;
+  readonly settings: QualityState;
   readonly onInputAction: (action: MovementAction, pressed: boolean) => void;
 }
 
@@ -658,61 +664,72 @@ function createSetting(
   return field;
 }
 
-function createSettingsPanel(
-  documentRoot: Document,
-  preferences: PreferenceSnapshot,
-): DocumentFragment {
-  const fragment = documentRoot.createDocumentFragment();
-  const intro = documentRoot.createElement('p');
-  const settings = documentRoot.createElement('dl');
-  const motionValue = preferences.prefersReducedMotion
-    ? 'Reduced motion requested'
-    : 'Standard motion permitted';
-  const inputValue = preferences.primaryPointerCoarse
-    ? 'Touch-first controls'
-    : preferences.anyPointerFine
-      ? 'Mouse and keyboard available'
-      : preferences.touchCapable
-        ? 'Touch controls available'
-        : 'Keyboard fallback available';
+function createRadioOption(documentRoot: Document, name: string, id: string, value: string, labelText: string, description: string): HTMLLabelElement {
+  const label = documentRoot.createElement('label');
+  const input = documentRoot.createElement('input');
+  const copy = documentRoot.createElement('span');
+  const title = documentRoot.createElement('strong');
+  const help = documentRoot.createElement('small');
+  label.className = 'setting-option'; input.type = 'radio'; input.name = name; input.id = id; input.value = value; input.dataset.testid = id;
+  title.textContent = labelText; help.textContent = description; copy.append(title, help); label.append(input, copy);
+  return label;
+}
 
-  intro.textContent =
-    'This visit follows your browser and device preferences. Controls remain available without changing system settings.';
-  settings.className = 'setting-list';
-  settings.append(
-    createSetting(
-      documentRoot,
-      'Motion',
-      motionValue,
-      'Non-essential interface motion follows the system reduced-motion preference.',
-    ),
-    createSetting(
-      documentRoot,
-      'Primary input',
-      inputValue,
-      preferences.hoverCapable
-        ? 'Hover and fine-pointer feedback are available.'
-        : 'Touch-sized controls and drag look remain available.',
-    ),
-    createSetting(
-      documentRoot,
-      'Keyboard',
-      'WASD and arrow keys',
-      'Keyboard movement remains available alongside mouse, drag, or touch look.',
-    ),
-    createSetting(
-      documentRoot,
-      'Graphics',
-      'Automatic capability check',
-      'Retry always begins a fresh WebGL2 capability evaluation.',
-    ),
-  );
-  fragment.append(
-    createDrawerHeader(documentRoot, 'app-settings-title', 'Experience settings', 'close-settings-button'),
-    intro,
-    settings,
-  );
+function qualityStatus(state: QualityState): string {
+  const tier = state.activeTier[0]!.toUpperCase() + state.activeTier.slice(1);
+  if (state.preference !== 'auto') return `${tier} is active. Auto adjustments are off.`;
+  if (state.transitionReason === 'auto-downshift') return `Auto is using ${tier} after a sustained slowdown.`;
+  if (state.transitionReason === 'auto-upshift') return `Auto is using ${tier} after sustained smooth performance.`;
+  return `Auto is using ${tier}.`;
+}
+
+function createSettingsPanel(documentRoot: Document, preferences: PreferenceSnapshot): DocumentFragment {
+  const fragment = documentRoot.createDocumentFragment();
+  const content = documentRoot.createElement('div');
+  const intro = documentRoot.createElement('p');
+  const quality = documentRoot.createElement('fieldset'); const qualityLegend = documentRoot.createElement('legend');
+  const qualityExplanation = documentRoot.createElement('p'); const qualityState = documentRoot.createElement('p');
+  const autoExplanation = documentRoot.createElement('p');
+  const motion = documentRoot.createElement('fieldset'); const motionLegend = documentRoot.createElement('legend');
+  const motionExplanation = documentRoot.createElement('p'); const motionState = documentRoot.createElement('p');
+  const persistence = documentRoot.createElement('p');
+  const controlsHeading = documentRoot.createElement('h3'); const controls = documentRoot.createElement('dl');
+  const inputValue = preferences.primaryPointerCoarse ? 'Touch-first controls' : preferences.anyPointerFine ? 'Mouse and keyboard available' : preferences.touchCapable ? 'Touch controls available' : 'Keyboard fallback available';
+  content.className = 'drawer-scroll-region settings-content'; content.tabIndex = 0; content.setAttribute('aria-label', 'Settings content'); content.dataset.testid = 'settings-content';
+  intro.className = 'disclosure-intro'; intro.textContent = 'Choose how this visit balances detail and smooth movement.';
+  quality.className = 'settings-fieldset'; quality.dataset.testid = 'quality-fieldset'; quality.setAttribute('aria-describedby', 'quality-explanation quality-auto-explanation quality-status');
+  qualityLegend.textContent = 'Visual quality';
+  quality.append(qualityLegend,
+    createRadioOption(documentRoot, 'quality-preference', 'quality-auto', 'auto', 'Auto', 'Adjusts cautiously to keep movement smooth.'),
+    createRadioOption(documentRoot, 'quality-preference', 'quality-low', 'low', 'Low', 'Lower resolution and reduced distant detail.'),
+    createRadioOption(documentRoot, 'quality-preference', 'quality-medium', 'medium', 'Medium', 'Balanced image quality and scene detail.'),
+    createRadioOption(documentRoot, 'quality-preference', 'quality-high', 'high', 'High', 'Sharpest image and fullest distant detail.'));
+  qualityExplanation.id = 'quality-explanation'; qualityExplanation.textContent = 'Quality may change image sharpness, shadows, and distant detail, but keeps your position and the places along the route.';
+  autoExplanation.id = 'quality-auto-explanation'; autoExplanation.textContent = 'Auto favors smooth walking. It lowers detail after a sustained slowdown and raises it only after a longer stable period.';
+  qualityState.id = 'quality-status'; qualityState.className = 'setting-status';
+  motion.className = 'settings-fieldset'; motion.dataset.testid = 'motion-fieldset'; motion.setAttribute('aria-describedby', 'motion-explanation motion-status'); motionLegend.textContent = 'Motion';
+  motion.append(motionLegend,
+    createRadioOption(documentRoot, 'motion-preference', 'motion-system', 'system', 'Follow device setting', 'Uses your browser or operating-system motion preference.'),
+    createRadioOption(documentRoot, 'motion-preference', 'motion-reduced', 'reduced', 'Reduce motion', 'Always reduces non-essential motion for this visit.'));
+  motionExplanation.id = 'motion-explanation'; motionExplanation.textContent = 'Reduced motion quiets wind, water, and non-essential interface transitions. Walking and looking remain immediate.';
+  motionState.id = 'motion-status'; motionState.className = 'setting-status';
+  persistence.id = 'settings-persistence-note'; persistence.className = 'setting-persistence';
+  controlsHeading.textContent = 'Controls available'; controls.className = 'setting-list';
+  controls.append(createSetting(documentRoot, 'Primary input', inputValue, preferences.hoverCapable ? 'Hover and fine-pointer feedback are available.' : 'Touch-sized controls and drag look remain available.'), createSetting(documentRoot, 'Keyboard', 'WASD and arrow keys', 'Keyboard movement remains available alongside mouse, drag, or touch look.'));
+  content.append(intro, quality, qualityExplanation, autoExplanation, qualityState, motion, motionExplanation, motionState, persistence, controlsHeading, controls);
+  fragment.append(createDrawerHeader(documentRoot, 'app-settings-title', 'Experience settings', 'close-settings-button'), content);
   return fragment;
+}
+
+function syncSettingsPanel(container: HTMLElement, state: QualityState): void {
+  for (const input of container.querySelectorAll<HTMLInputElement>('input[name="quality-preference"]')) input.checked = input.value === state.preference;
+  for (const input of container.querySelectorAll<HTMLInputElement>('input[name="motion-preference"]')) input.checked = input.value === state.motionPreference;
+  const quality = container.querySelector('#quality-status'); if (quality !== null) quality.textContent = qualityStatus(state);
+  const motion = container.querySelector('#motion-status');
+  if (motion !== null) motion.textContent = state.motionPreference === 'reduced' ? 'Reduced motion is on.' : state.effectiveReducedMotion ? 'Your device requests reduced motion.' : 'Using your device setting: standard motion.';
+  const persistence = container.querySelector('#settings-persistence-note');
+  if (persistence !== null) persistence.textContent = state.persistence === 'saved' ? 'Changes are saved on this device.' : state.persistence === 'available' ? 'Choices can be saved on this device.' : 'Changes last only for this visit because browser storage is unavailable.';
+  document.documentElement.dataset.motion = state.effectiveReducedMotion ? 'reduced' : 'standard';
 }
 
 export class AppUI {
@@ -720,11 +737,12 @@ export class AppUI {
   private readonly documentRoot: Document;
   private readonly onAction: AppUIActionHandler;
   private readonly preferences: PreferenceSnapshot;
+  private settingsState: QualityState;
   private currentPanel: AppPanel = 'none';
   private readonly touchControls: TouchControls;
   private canFocusStart = false;
   private canFocusResume = false;
-  private lastAnnouncementKey: string | null = null;
+  private readonly announcements: AnnouncementBroker;
   private returnFocusCommand: ReturnFocusCommand | null = null;
   private destroyed = false;
   private routeGuide: RouteGuide | null = null;
@@ -732,12 +750,18 @@ export class AppUI {
   constructor(options: AppUIOptions) {
     this.documentRoot = document;
     this.elements = collectElements(this.documentRoot);
+    this.announcements = new AnnouncementBroker((text) => {
+      this.elements.status.hidden = false;
+      this.elements.status.textContent = text;
+    });
     this.onAction = options.onAction;
     this.preferences = options.preferences;
+    this.settingsState = options.settings;
     const touchRoot = this.documentRoot.createElement('div');
     this.elements.interfaceLayer.append(touchRoot);
     this.touchControls = new TouchControls({ root: touchRoot, onAction: options.onInputAction });
     this.elements.interfaceLayer.addEventListener('click', this.handleClick);
+    this.elements.settings.addEventListener('change', this.handleSettingsChange);
     this.documentRoot.addEventListener('keydown', this.handleKeydown);
   }
 
@@ -767,7 +791,10 @@ export class AppUI {
     const touchVisible = invariant.isExploring && invariant.control === 'drag' && invariant.panel === 'none'
       && shouldOfferTouchControls(this.preferences);
     this.touchControls.sync({ visible: touchVisible, enabled: touchVisible });
-    this.renderStatus(view.status, stateAnnouncementKey);
+    const settingsPanelTransition = invariant.panel === 'settings'
+      || (previousPanel === 'settings' && invariant.panel === 'none'
+        && (state.kind === 'onboarding' || state.kind === 'exploring' || state.kind === 'paused' || state.kind === 'degraded'));
+    if (!settingsPanelTransition) this.renderStatus(view.status, stateAnnouncementKey);
     this.applyFocus(previousPanel, previouslyReady, focusedCommand);
   }
 
@@ -799,6 +826,11 @@ export class AppUI {
     if (this.currentPanel === 'help') this.elements.help.replaceChildren(createHelpPanel(this.documentRoot, routeGuide));
   }
 
+  updateSettings(state: QualityState): void {
+    this.settingsState = state;
+    syncSettingsPanel(this.elements.settings, state);
+  }
+
   replaceCanvas(): HTMLCanvasElement {
     const replacement = this.elements.canvas.cloneNode(false) as HTMLCanvasElement;
     this.elements.canvas.replaceWith(replacement);
@@ -823,15 +855,15 @@ export class AppUI {
   }
 
   announceReset(): void {
-    this.elements.status.textContent = 'Position reset to the safe point.';
-    this.lastAnnouncementKey = null;
+    this.announcements.announceReset('Position reset to the safe point.');
+  }
+
+  announceAuto(id: string, text: string): void {
+    this.announcements.announceAuto(id, text);
   }
 
   announce(id: string, text: string): void {
-    if (this.lastAnnouncementKey === id) return;
-    this.elements.status.hidden = false;
-    this.elements.status.textContent = text;
-    this.lastAnnouncementKey = id;
+    this.announcements.announcePriority(id, text);
   }
 
   destroy(): void {
@@ -840,10 +872,21 @@ export class AppUI {
     }
 
     this.elements.interfaceLayer.removeEventListener('click', this.handleClick);
+    this.elements.settings.removeEventListener('change', this.handleSettingsChange);
     this.documentRoot.removeEventListener('keydown', this.handleKeydown);
     this.touchControls.destroy();
+    this.announcements.destroy();
     this.destroyed = true;
   }
+
+  private readonly handleSettingsChange = (event: Event): void => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.type !== 'radio' || !event.target.checked) return;
+    if (event.target.name === 'quality-preference' && (event.target.value === 'auto' || event.target.value === 'low' || event.target.value === 'medium' || event.target.value === 'high')) {
+      this.onAction({ type: 'QUALITY_PREFERENCE_CHANGED', preference: event.target.value });
+    } else if (event.target.name === 'motion-preference' && (event.target.value === 'system' || event.target.value === 'reduced')) {
+      this.onAction({ type: 'MOTION_PREFERENCE_CHANGED', preference: event.target.value });
+    }
+  };
 
   private readonly handleClick = (event: Event): void => {
     if (!(event.target instanceof Element)) {
@@ -1040,9 +1083,8 @@ export class AppUI {
       this.elements.help.replaceChildren(createHelpPanel(this.documentRoot, this.routeGuide));
       this.elements.settings.replaceChildren();
     } else if (panel === 'settings') {
-      this.elements.settings.replaceChildren(
-        createSettingsPanel(this.documentRoot, this.preferences),
-      );
+      this.elements.settings.replaceChildren(createSettingsPanel(this.documentRoot, this.preferences));
+      syncSettingsPanel(this.elements.settings, this.settingsState);
       this.elements.help.replaceChildren();
     } else {
       this.elements.help.replaceChildren();
@@ -1058,15 +1100,7 @@ export class AppUI {
   }
 
   private renderStatus(status: string, key: string): void {
-    if (this.elements.status.hidden) {
-      this.elements.status.hidden = false;
-    }
-    if (this.lastAnnouncementKey === key) {
-      return;
-    }
-
-    this.elements.status.textContent = status;
-    this.lastAnnouncementKey = key;
+    this.announcements.announcePriority(key, status);
   }
 
   private applyFocus(

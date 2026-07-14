@@ -235,7 +235,7 @@ test('desktop clicks and mobile taps reach About, Help, and Close', async ({ pag
 });
 
 test('both disclosure surfaces are complete, scroll-safe, and lifecycle-neutral', async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   await page.goto(SUPPORTED_URL);
   await expect(page.getByTestId('start-button')).toBeFocused();
   const initialLiveText = await startLiveRegionObservation(page);

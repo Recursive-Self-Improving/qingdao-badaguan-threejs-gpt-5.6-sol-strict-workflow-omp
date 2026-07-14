@@ -10,6 +10,7 @@ import {
 } from 'three';
 
 import type { ResourceRegistry } from '../../render/ResourceRegistry';
+import { qualityProfile } from '../../quality/qualityTiers';
 import type {
   AtmosphereConfig,
   EnvironmentController,
@@ -24,13 +25,6 @@ function validateConfig(config: AtmosphereConfig): void {
   if (!(config.fog.near > 0 && config.fog.far > config.fog.near)) {
     throw new RangeError('Environment fog must have a positive, ordered depth range.');
   }
-  for (const quality of Object.values(config.quality)) {
-    const fogNear = config.fog.near * quality.fogNearMultiplier;
-    const fogFar = config.fog.far * quality.fogFarMultiplier;
-    if (!(quality.ambientMultiplier > 0 && fogNear > 0 && fogFar > fogNear)) {
-      throw new RangeError('Environment quality must define positive ambient fill and an ordered fog range.');
-    }
-  }
   if (config.cameraViews.length !== 5 || new Set(config.cameraViews.map(({ id }) => id)).size !== 5) {
     throw new RangeError('Environment must define five unique verification views.');
   }
@@ -44,7 +38,8 @@ export function createEnvironment(
   config: AtmosphereConfig,
 ): EnvironmentController {
   validateConfig(config);
-  const quality = config.quality[settings.density];
+  const profile = qualityProfile(settings.density);
+  const quality = profile.environment;
   const fogNear = config.fog.near * quality.fogNearMultiplier;
   const fogFar = config.fog.far * quality.fogFarMultiplier;
   const ambientIntensity = config.hemisphere.intensity * quality.ambientMultiplier;
@@ -71,31 +66,31 @@ export function createEnvironment(
   backgroundTexture.minFilter = LinearFilter;
   backgroundTexture.generateMipmaps = false;
   backgroundTexture.needsUpdate = true;
-  const hemisphere = new HemisphereLight(
+  const hemisphere = resources.register(new HemisphereLight(
     config.hemisphere.skyColor,
     config.hemisphere.groundColor,
     ambientIntensity,
-  );
+  ), group);
   hemisphere.name = 'environment:hemisphere-fill';
   root.add(hemisphere);
 
-  const sun = new DirectionalLight(config.sun.color, config.sun.intensity);
+  const sun = resources.register(new DirectionalLight(config.sun.color, config.sun.intensity), group);
   sun.name = 'environment:morning-sun';
   sun.position.set(...config.sun.position);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
-  sun.shadow.camera.left = -quality.shadowCameraExtent;
-  sun.shadow.camera.right = quality.shadowCameraExtent;
-  sun.shadow.camera.top = quality.shadowCameraExtent;
-  sun.shadow.camera.bottom = -quality.shadowCameraExtent;
+  sun.shadow.mapSize.set(profile.shadows.mapSize, profile.shadows.mapSize);
+  sun.shadow.camera.left = -profile.shadows.cameraExtent;
+  sun.shadow.camera.right = profile.shadows.cameraExtent;
+  sun.shadow.camera.top = profile.shadows.cameraExtent;
+  sun.shadow.camera.bottom = -profile.shadows.cameraExtent;
   sun.shadow.camera.near = 15;
   sun.shadow.camera.far = 520;
   sun.shadow.bias = quality.shadowBias;
   sun.shadow.normalBias = quality.shadowNormalBias;
-  sun.shadow.radius = settings.density === 'high' ? 3 : settings.density === 'medium' ? 2 : 1;
+  sun.shadow.radius = profile.shadows.radius;
   sun.shadow.autoUpdate = false;
   sun.shadow.needsUpdate = true;
-  sun.shadow.blurSamples = 8;
+  sun.shadow.blurSamples = profile.shadows.blurSamples;
   sun.target.position.set(...config.sun.target);
   root.add(sun, sun.target);
 
@@ -112,7 +107,7 @@ export function createEnvironment(
     exposure: quality.exposure,
     ambientIntensity,
     skyGradientRows: SKY_GRADIENT_ROWS,
-    shadowMapSize: quality.shadowMapSize,
+    shadowMapSize: profile.shadows.mapSize,
     shadowBias: quality.shadowBias,
     shadowNormalBias: quality.shadowNormalBias,
     contactGrounding: true,

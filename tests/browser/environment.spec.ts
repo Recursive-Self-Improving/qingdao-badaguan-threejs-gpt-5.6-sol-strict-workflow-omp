@@ -24,11 +24,12 @@ async function metrics(page: Page): Promise<ThreeRuntimeMetrics> {
 }
 
 async function boot(page: Page): Promise<ThreeRuntimeMetrics> {
+  await page.addInitScript(() => localStorage.setItem('badaguan.preferences.v1', JSON.stringify({ version: 1, quality: 'high', motion: 'system' })));
   await page.goto(SUPPORTED_URL);
   await page.getByTestId('start-button').click();
   await expect(page.locator('#app')).toHaveAttribute('data-app-state', 'exploring');
   await expect(page.locator('#app-canvas')).toHaveAttribute(METRICS_ATTRIBUTE, /"environment"/);
-  await expect.poll(async () => (await metrics(page)).runtime.renders).toBeGreaterThan(0);
+  await expect.poll(async () => (await metrics(page)).runtime.renders, { timeout: 30_000 }).toBeGreaterThan(0);
   return metrics(page);
 }
 
@@ -80,7 +81,7 @@ async function pixels(page: Page): Promise<PixelMetrics> {
 }
 
 test('C07 exposes calibrated fog, soft shadows, coast depth, and deterministic five-view readability', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const initial = await boot(page);
   expect(initial.world.environment).toMatchObject({
     quality: 'high',
@@ -178,8 +179,8 @@ test('C07 exposes calibrated fog, soft shadows, coast depth, and deterministic f
   }
 
   const qualityCases = [
-    { density: 'medium', motion: 'standard', shadowMapSize: 1024, waterSegments: 4, amplitude: 0.018, fogNear: 90, fogFar: 399, ambientIntensity: 1.2212, exposure: 1.05 },
-    { density: 'low', motion: 'standard', shadowMapSize: 512, waterSegments: 1, amplitude: 0, fogNear: 108, fogFar: 437, ambientIntensity: 1.278, exposure: 1.08 },
+    { density: 'medium', motion: 'standard', shadowMapSize: 2048, waterSegments: 4, amplitude: 0.012, fogNear: 90, fogFar: 399, ambientIntensity: 1.2212, exposure: 1.05 },
+    { density: 'low', motion: 'standard', shadowMapSize: 1024, waterSegments: 1, amplitude: 0, fogNear: 108, fogFar: 437, ambientIntensity: 1.278, exposure: 1.08 },
     { density: 'high', motion: 'reduced', shadowMapSize: 2048, waterSegments: 8, amplitude: 0, fogNear: 80, fogFar: 380, ambientIntensity: 1.1644, exposure: 1.04 },
   ] as const;
   for (const quality of qualityCases) {

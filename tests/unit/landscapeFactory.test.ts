@@ -681,9 +681,9 @@ describe('landscape factory', () => {
       if (object.castShadow) shadowCasters.push(object);
     });
     expect(shadowCasters.length).toBeGreaterThan(0);
-    expect(shadowCasters.every(({ name }) => name.includes(':trunks'))).toBe(true);
     const vegetationMeshes = instancedMeshes(landscape.root)
       .filter(({ name }) => name.startsWith('vegetation:instances:'));
+    expect(shadowCasters).toHaveLength(vegetationMeshes.length);
     const canopyMeshes = vegetationMeshes.filter(({ name }) => name.includes(':canopies:') || name.endsWith(':accents'));
     const trunkMeshes = vegetationMeshes.filter(({ name }) => name.includes(':trunks'));
     expect(canopyMeshes.length).toBeGreaterThan(0);
@@ -850,6 +850,31 @@ describe('landscape factory', () => {
     standard.resources.disposeGroup(standard.group);
     reduced.resources.disposeGroup(reduced.group);
     lowStandard.resources.disposeGroup(lowStandard.group);
+  });
+
+  it('applies exact profile wind cadence and vegetation shadow policy', () => {
+    const medium = build('medium', 'standard', 'landscape-cadence-medium');
+    const mediumInitial = dynamicMatrixVersions(medium.landscape.root);
+    expect(medium.landscape.metrics.motion.amplitude).toBe(0.012);
+    medium.landscape.update({ elapsedSeconds: 1 / 60, deltaSeconds: 1 / 60 });
+    expect(dynamicMatrixVersions(medium.landscape.root)).toEqual(mediumInitial);
+    medium.landscape.update({ elapsedSeconds: 2 / 60, deltaSeconds: 1 / 60 });
+    expect(dynamicMatrixVersions(medium.landscape.root).some((version, index) => version > (mediumInitial[index] ?? version))).toBe(true);
+
+    const high = build('high', 'standard', 'landscape-cadence-high');
+    const highInitial = dynamicMatrixVersions(high.landscape.root);
+    expect(high.landscape.metrics.motion.amplitude).toBe(0.016);
+    high.landscape.update({ elapsedSeconds: 1 / 120, deltaSeconds: 1 / 120 });
+    expect(dynamicMatrixVersions(high.landscape.root)).toEqual(highInitial);
+    high.landscape.update({ elapsedSeconds: 2 / 120, deltaSeconds: 1 / 120 });
+    expect(dynamicMatrixVersions(high.landscape.root).some((version, index) => version > (highInitial[index] ?? version))).toBe(true);
+
+    const low = build('low', 'standard', 'landscape-shadow-low');
+    const vegetation = (root: Object3D) => instancedMeshes(root).filter(({ name }) => name.startsWith('vegetation:instances:'));
+    expect(vegetation(low.landscape.root).every(({ castShadow }) => !castShadow)).toBe(true);
+    expect(vegetation(medium.landscape.root).every(({ castShadow }) => castShadow)).toBe(true);
+    expect(vegetation(high.landscape.root).every(({ castShadow }) => castShadow)).toBe(true);
+    medium.resources.disposeGroup(medium.group); high.resources.disposeGroup(high.group); low.resources.disposeGroup(low.group);
   });
 
   it('registers one disposable generation group and finalizes disposal idempotently', () => {

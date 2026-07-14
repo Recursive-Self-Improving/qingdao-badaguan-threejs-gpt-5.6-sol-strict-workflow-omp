@@ -6,8 +6,8 @@ import {
   type AppEvent,
   type AppState,
 } from './appState';
-import { detectCapabilities, type CapabilityDetectionOptions } from '../platform/capabilities';
-import { detectPreferences, type PreferenceSnapshot } from '../platform/preferences';
+import { detectCapabilities, detectGraphicsCapabilityFacts, type CapabilityDetectionOptions } from '../platform/capabilities';
+import { detectPreferences, loadPersistedPreferences, observeReducedMotion, savePersistedPreferences, type PreferenceSnapshot } from '../platform/preferences';
 import { InteractionViewportObserver } from '../platform/viewport';
 import { createAppUI, type AppUI, type AppUIAction } from '../ui/AppUI';
 import { ThreeRuntime } from '../render/ThreeRuntime';
@@ -24,7 +24,8 @@ import { neutralRouteGuideFallback, optionalFallback, requiredFailureMessage } f
 import { parseRouteGuide, ROUTE_GUIDE_ASSET_ID, ROUTE_GUIDE_URL, type RouteGuide } from '../loading/routeGuide';
 import { ContextRecovery, type ContextToken } from '../render/contextRecovery';
 import type { MovementPose } from '../exploration/MovementController';
-import type { LandscapeSettings } from '../world/types';
+import { QualityController, type QualityApplication, type QualityState } from '../quality/QualityController';
+import { qualityProfile, type QualityCapabilityFacts } from '../quality/qualityTiers';
 
 type DevelopmentScenario =
   | 'unsupported'
@@ -83,6 +84,18 @@ interface QueuedOptionalOutcome {
   readonly attempt: number;
   readonly outcome: LoadOutcome<RouteGuide>;
 }
+export function respondToDevelopmentQualityState(
+  detail: unknown,
+  getState: () => QualityState,
+  development = import.meta.env.DEV,
+): boolean {
+  if (!development || typeof detail !== 'object' || detail === null) return false;
+  const request = detail as Record<string, unknown>;
+  if (request.action !== 'quality/state' || typeof request.respond !== 'function') return false;
+  (request.respond as (state: QualityState) => void)(getState());
+  return true;
+}
+
 
 export class AppController {
   private state: AppState = INITIAL_APP_STATE;
@@ -91,6 +104,8 @@ export class AppController {
   private readonly capabilityOptions: CapabilityDetectionOptions | undefined;
   private readonly preferences: PreferenceSnapshot;
   private readonly ui: AppUI;
+  private readonly qualityController: QualityController;
+  private readonly stopMotionObservation: () => void;
   private runtime: ThreeRuntime | null = null;
   private inputController: InputController | null = null;
   private pointerLockLook: PointerLockLook | null = null;
@@ -110,7 +125,7 @@ export class AppController {
   private recoveryPose: MovementPose | null = null;
   private recoveryToken: ContextToken | null = null;
   private recoveryAbort: AbortController | null = null;
-  private recoverySettings: LandscapeSettings | null = null;
+  private recoveryQuality: QualityApplication | null = null;
   private recoveryRuntime: ThreeRuntime | null = null;
   private queuedOptionalOutcome: QueuedOptionalOutcome | null = null;
   private readonly routeTimeoutMs: number;
@@ -148,11 +163,35 @@ export class AppController {
     const requestedHold = import.meta.env.DEV ? Number(developmentParameters.get('loadingHoldMs')) : Number.NaN;
     this.loadingHoldMs = Number.isFinite(requestedHold) && requestedHold > 0 ? requestedHold : 0;
     this.preferences = detectPreferences();
-    this.ui = createAppUI({
-      preferences: this.preferences,
+    const graphics = detectGraphicsCapabilityFacts();
+    const qualityFacts: QualityCapabilityFacts = Object.freeze({
+      acceleration: graphics.acceleration, deviceMemoryGiB: graphics.deviceMemoryGiB,
+      primaryPointerCoarse: this.preferences.primaryPointerCoarse, anyPointerFine: this.preferences.anyPointerFine,
+      hoverCapable: this.preferences.hoverCapable, maxTextureSize: graphics.maxTextureSize, maxAnisotropy: graphics.maxAnisotropy,
+      cssWidth: window.innerWidth, cssHeight: window.innerHeight, devicePixelRatio: window.devicePixelRatio,
+    });
+    const persisted = loadPersistedPreferences();
+    let ui: AppUI | null = null; let announcedRevision = 0;
+    this.qualityController = new QualityController({
+      initial: persisted, capabilities: qualityFacts, systemReducedMotion: this.preferences.prefersReducedMotion,
+      apply: (next) => this.applyQualityApplication(next), persist: (value) => savePersistedPreferences(value),
+      onStateChange: (state) => {
+        ui?.updateSettings(state);
+        if (ui !== null && state.transitionRevision > announcedRevision) {
+          announcedRevision = state.transitionRevision;
+          this.announceQualityTransition(state);
+        }
+      },
+    });
+    this.qualityController.suspend('paused');
+    ui = createAppUI({
+      preferences: this.preferences, settings: this.qualityController.state,
       onAction: (action) => this.handleUIAction(action),
       onInputAction: (action, pressed) => this.inputController?.setAction(action, pressed),
     });
+    this.ui = ui;
+    document.documentElement.dataset.motion = this.qualityController.state.effectiveReducedMotion ? 'reduced' : 'standard';
+    this.stopMotionObservation = observeReducedMotion((reduced) => this.qualityController.setSystemReducedMotion(reduced));
   }
 
   start(): void {
@@ -187,6 +226,8 @@ export class AppController {
     };
     cleanup(() => window.removeEventListener('keydown', this.onKeyDown));
     cleanup(() => this.assetCoordinator.dispose());
+    cleanup(() => this.stopMotionObservation());
+    cleanup(() => this.qualityController.dispose());
     cleanup(() => this.clearContextRecovery());
     cleanup(() => this.developmentRuntimeCleanup?.());
     this.developmentRuntimeCleanup = null;
@@ -198,6 +239,16 @@ export class AppController {
   }
 
   private handleUIAction(action: AppUIAction): void {
+    if (action.type === 'QUALITY_PREFERENCE_CHANGED') {
+      try { this.qualityController.setQualityPreference(action.preference); }
+      catch { this.ui.updateSettings(this.qualityController.state); this.ui.announce(`quality:failed:${Date.now()}`, `${action.preference[0]!.toUpperCase()}${action.preference.slice(1)} could not be applied. ${this.qualityController.state.activeTier[0]!.toUpperCase()}${this.qualityController.state.activeTier.slice(1)} is still active.`); }
+      return;
+    }
+    if (action.type === 'MOTION_PREFERENCE_CHANGED') {
+      try { this.qualityController.setMotionPreference(action.preference); }
+      catch { this.ui.updateSettings(this.qualityController.state); this.ui.announce(`motion:failed:${Date.now()}`, 'Motion preference could not be applied. Previous settings were kept.'); }
+      return;
+    }
     if (action.type === 'RESET') { this.resetExploration(); return; }
     if (action.type === 'CANCEL_LOADING') {
       const attempt = this.activeAssetAttempt;
@@ -370,12 +421,29 @@ export class AppController {
     const listener = (event: Event): void => {
       if (!(event instanceof CustomEvent)) return;
       const detail = event.detail as Record<string, unknown> | null;
+      if (respondToDevelopmentQualityState(detail, () => this.qualityController.state)) return;
       if (detail?.action === 'rebuild') { this.runtime?.rebuildScene(); return; }
+      if (detail?.action === 'quality/set-preference') {
+        const preference = detail.preference;
+        if (preference === 'auto' || preference === 'low' || preference === 'medium' || preference === 'high') this.qualityController.setQualityPreference(preference);
+        return;
+      }
+      if (detail?.action === 'quality/set-motion') {
+        const preference = detail.preference;
+        if (preference === 'system' || preference === 'reduced') this.qualityController.setMotionPreference(preference);
+        return;
+      }
+      if (detail?.action === 'quality/sample' && typeof detail.nowMs === 'number') { this.qualityController.sampleFrame(detail.nowMs); return; }
+      if (detail?.action === 'quality/metrics-snapshot') { this.runtime?.publishMetricsNow(); return; }
+      if (detail?.action === 'quality/metrics-reset') { this.runtime?.resetPerformanceMetrics(); return; }
+      if (detail?.action === 'quality/metrics-stream' && typeof detail.enabled === 'boolean') { this.runtime?.setDevelopmentMetricsStreaming(detail.enabled); return; }
       if (detail?.action === 'landscape/set-settings') {
         const settings = detail.settings;
         if (typeof settings === 'object' && settings !== null) {
           const { density, motion } = settings as Record<string, unknown>;
-          if ((density === 'high' || density === 'medium' || density === 'low') && (motion === 'standard' || motion === 'reduced')) this.runtime?.rebuildScene(Object.freeze({ density, motion }));
+          if ((density === 'high' || density === 'medium' || density === 'low') && (motion === 'standard' || motion === 'reduced')) {
+            this.runtime?.applyQuality(Object.freeze({ profile: qualityProfile(density), motion }));
+          }
         }
         return;
       }
@@ -390,6 +458,14 @@ export class AppController {
         return;
       }
       if (detail?.action === 'environment/frame') { if (typeof detail.view === 'string') this.runtime?.frameEnvironment(detail.view); return; }
+      if (detail?.action === 'environment/set-camera-pose') {
+        const position = detail.position; const target = detail.target;
+        if (Array.isArray(position) && position.length === 3 && position.every((value) => typeof value === 'number' && Number.isFinite(value))
+          && Array.isArray(target) && target.length === 3 && target.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+          this.runtime?.setEnvironmentCameraPose(position as unknown as readonly [number, number, number], target as unknown as readonly [number, number, number]);
+        }
+        return;
+      }
       if (detail?.action === 'world-debug/set-visible') { if (typeof detail.visible === 'boolean') this.runtime?.setWorldDebugVisible(detail.visible); return; }
       if (detail?.action === 'world-debug/visit-anchor') { if (typeof detail.anchorId === 'string') this.runtime?.visitWorldAnchor(detail.anchorId); return; }
       if (detail?.action === 'world-debug/frame-view') { if (detail.name === 'grid' || detail.name === 'public-green' || detail.name === 'sightlines' || detail.name === 'planting') this.runtime?.frameWorldDebugView(detail.name); return; }
@@ -411,7 +487,36 @@ export class AppController {
     this.developmentRuntimeCleanup = () => document.removeEventListener(eventName, listener);
   }
 
-  private createRuntime(landscapeSettings?: LandscapeSettings): boolean {
+  private applyQualityApplication(next: QualityApplication): void {
+    if (this.runtime === null) return;
+    const pose = this.movementController?.pose ?? null;
+    this.qualityController.suspend('rebuild');
+    this.inputController?.clear('viewport'); this.dragLook?.cancel(); this.touchLook?.cancel(); this.ui.clearTouchControls();
+    try {
+      this.runtime.applyQuality(next);
+      if (pose !== null) this.movementController?.restorePose(pose);
+      this.movementController?.invalidateResumeDelta();
+    } finally { this.qualityController.resume('rebuild'); }
+  }
+
+  private announceQualityTransition(state: QualityState): void {
+    const tier = state.activeTier[0]!.toUpperCase() + state.activeTier.slice(1);
+    const saved = state.persistence === 'saved';
+    let message: string;
+    if (state.transitionReason === 'auto-downshift') message = `Auto changed quality to ${tier} to keep movement smooth.`;
+    else if (state.transitionReason === 'auto-upshift') message = `Auto changed quality to ${tier} after sustained smooth performance.`;
+    else if (state.transitionReason === 'user-quality') message = state.preference === 'auto'
+      ? `Auto selected${saved ? ' and saved' : ''}. Currently using ${tier}.`
+      : `${tier} is active${saved ? ' and saved on this device' : ' for this visit, but this browser could not save the choice'}.`;
+    else if (state.transitionReason === 'user-motion') message = state.motionPreference === 'reduced'
+      ? `Reduced motion is on${saved ? ' and saved on this device' : ' for this visit, but this browser could not save the choice'}.`
+      : state.effectiveReducedMotion ? 'Following your device setting. Reduced motion remains on.' : 'Following your device setting. Standard motion is now allowed.';
+    else message = state.effectiveReducedMotion ? 'Device motion preference changed. Reduced motion is now on.' : 'Device motion preference changed. Standard motion is now allowed.';
+    if (state.transitionReason === 'auto-downshift' || state.transitionReason === 'auto-upshift') this.ui.announceAuto(`settings:${state.transitionRevision}`, message);
+    else this.ui.announce(`settings:${state.transitionRevision}`, message);
+  }
+
+  private createRuntime(application: QualityApplication = this.qualityController.application): boolean {
     if (this.destroyed || this.runtime !== null) return this.runtime !== null;
     const canvas = document.querySelector<HTMLCanvasElement>('#app-canvas');
     if (canvas === null) return false;
@@ -422,10 +527,10 @@ export class AppController {
     let touch: TouchLook | null = null;
     let movement: MovementController | null = null;
     try {
-      runtime = new ThreeRuntime(canvas, { onUpdate: (frame) => this.movementController?.update(frame.deltaSeconds), landscapeSettings: landscapeSettings ?? Object.freeze({ density: 'high', motion: this.preferences.prefersReducedMotion ? 'reduced' : 'standard' }) });
+      runtime = new ThreeRuntime(canvas, { onUpdate: (frame) => this.movementController?.update(frame.deltaSeconds), onPerformanceSample: (timestamp) => this.qualityController.sampleFrame(timestamp), qualityApplication: application });
       const world = runtime.worldBuildResult;
       if (world === null) throw new Error('The graphics world was not initialized.');
-      input = new InputController({ canvas, onClear: (reason) => this.handleInputClear(reason), onReset: () => this.ui.announceReset() });
+      input = new InputController({ canvas, onClear: (reason) => this.handleInputClear(reason), onReset: () => this.announceExplorationReset() });
       movement = new MovementController({ camera: runtime.camera, input, navigation: world.navigation, spawnPose: { position: world.navigation.spawn, yaw: world.data.spawnYaw }, resetPose: { position: world.navigation.reset, yaw: world.data.resetYaw }, eyeHeight: APP_CONFIG.camera.eyeHeight, walkSpeed: APP_CONFIG.controls.walkSpeed, cameraRadius: DEFAULT_CAMERA_RADIUS, maxPitchRadians: APP_CONFIG.controls.maxPitchRadians, maxDeltaSeconds: APP_CONFIG.controls.maxDeltaSeconds });
       look = new PointerLockLook({ target: canvas, sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel, onLook: (delta) => this.movementController?.applyLook(delta), onOutcome: (outcome) => this.handlePointerLockOutcome(outcome) });
       drag = new DragLook({ target: canvas, sensitivityRadiansPerPixel: APP_CONFIG.controls.lookSensitivityRadiansPerPixel, onLook: (delta) => this.movementController?.applyLook(delta) });
@@ -455,14 +560,15 @@ export class AppController {
   private handleContextLost(token: ContextToken): void {
     if (this.runtime === null || this.movementController === null || this.destroyed) return;
     const canvasOwnedFocus = document.activeElement === this.runtime.renderer.domElement || this.hasConfirmedPointerLock;
-    this.recoveryAbort?.abort(); this.recoveryAbort = new AbortController(); this.recoveryToken = token; this.recoveryPose = this.movementController.pose; this.recoverySettings = this.runtime.currentLandscapeSettings; this.recoveryRuntime = this.runtime;
+    this.recoveryAbort?.abort(); this.recoveryAbort = new AbortController(); this.recoveryToken = token; this.recoveryPose = this.movementController.pose; this.recoveryQuality = this.runtime.currentQuality; this.recoveryRuntime = this.runtime;
+    this.qualityController.suspend('context-lost');
     this.inputController?.clear('context-lost'); this.dragLook?.cancel(); this.touchLook?.cancel(); this.pointerLockLook?.releaseLock(); this.ui.clearTouchControls(); this.movementController.invalidateResumeDelta(); this.runtime.suspend('context-lost');
     this.dispatch({ type: 'CONTEXT_LOST' });
     if (canvasOwnedFocus) this.ui.focusHeading();
   }
 
   private async handleContextRestore(token: ContextToken): Promise<void> {
-    if (!this.isCurrentRecovery(token) || this.recoveryPose === null || this.recoverySettings === null) return;
+    if (!this.isCurrentRecovery(token) || this.recoveryPose === null || this.recoveryQuality === null) return;
     const projection = this.state.kind === 'context-lost' ? this.state.restore : undefined;
     if (!this.dispatch({ type: 'CONTEXT_RECOVERY_STARTED' })) return;
     if (this.recoveryHoldMs > 0) await waitForDevelopmentHold(this.recoveryHoldMs);
@@ -471,17 +577,18 @@ export class AppController {
     try {
       if (this.failRecoveryBuild) throw new Error('Forced DEV recovery build failure.');
       const pose = this.recoveryPose;
-      const settings = this.recoverySettings;
+      const application = this.recoveryQuality;
       this.contextRecovery?.dispose(); this.contextRecovery = null; this.disposeRuntime();
       if (!this.isCurrentRecovery(token, false)) return;
-      if (!this.createRuntime(settings) || this.movementController === null || this.runtime === null) throw new Error('Recovery runtime could not be created.');
+      if (!this.createRuntime(application) || this.movementController === null || this.runtime === null) throw new Error('Recovery runtime could not be created.');
       this.movementController.restorePose(pose); this.runtime.validateFrame();
       if (!this.isCurrentRecovery(token, false)) throw new Error('Recovery generation was superseded.');
       const restored = projection === undefined ? undefined : normalizeRestorableProjection(projection);
-      this.recoveryAbort?.abort(); this.recoveryAbort = null; this.recoveryToken = null; this.recoveryPose = null; this.recoverySettings = null; this.recoveryRuntime = null;
+      this.recoveryAbort?.abort(); this.recoveryAbort = null; this.recoveryToken = null; this.recoveryPose = null; this.recoveryQuality = null; this.recoveryRuntime = null;
       this.dispatch(restored === undefined ? { type: 'CONTEXT_RESTORED' } : { type: 'CONTEXT_RESTORED', projection: restored });
       this.installContextRecovery();
       this.ui.announce(`context:${token.generation}:restored`, 'Graphics restored. Your position and settings were kept.');
+      this.qualityController.resume('context-lost');
       this.focusOperationalState();
       const queued = this.queuedOptionalOutcome;
       this.queuedOptionalOutcome = null;
@@ -504,7 +611,7 @@ export class AppController {
   }
 
   private clearContextRecovery(): void {
-    this.contextRecovery?.dispose(); this.contextRecovery = null; this.recoveryAbort?.abort(); this.recoveryAbort = null; this.recoveryToken = null; this.recoveryPose = null; this.recoverySettings = null; this.recoveryRuntime = null; this.queuedOptionalOutcome = null;
+    this.contextRecovery?.dispose(); this.contextRecovery = null; this.recoveryAbort?.abort(); this.recoveryAbort = null; this.recoveryToken = null; this.recoveryPose = null; this.recoveryQuality = null; this.recoveryRuntime = null; this.queuedOptionalOutcome = null;
   }
 
   private focusOperationalState(): void {
@@ -525,6 +632,7 @@ export class AppController {
   private syncExplorationControllers(): void {
     const invariant = getAppStateInvariant(this.state);
     const exploring = invariant.isExploring;
+    if (exploring) this.qualityController.resume('paused'); else this.qualityController.suspend('paused');
     const fallbackActive = exploring && invariant.control === 'drag' && invariant.panel === 'none';
     this.inputController?.setEnabled(exploring);
     this.inputController?.setIntentionalFocus(exploring && invariant.panel === 'none');
@@ -582,6 +690,10 @@ export class AppController {
     this.ui.clearTouchControls();
     this.movementController?.reset();
     this.movementController?.invalidateResumeDelta();
+    this.announceExplorationReset();
+  }
+  private announceExplorationReset(): void {
+    this.qualityController.resetSampling();
     this.ui.announceReset();
   }
   private hasFinePointer(): boolean {

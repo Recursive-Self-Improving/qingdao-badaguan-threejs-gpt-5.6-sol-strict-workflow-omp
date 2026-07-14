@@ -3,7 +3,10 @@ import { expect, test, type Page } from '@playwright/test';
 
 interface ExplorationMetrics {
   readonly camera: { readonly position: readonly [number, number, number]; readonly yaw: number; readonly pitch: number };
-  readonly world: { readonly reset: { readonly x: number; readonly z: number; readonly groundHeight?: number; readonly yaw?: number } };
+  readonly world: {
+    readonly reset: { readonly x: number; readonly z: number; readonly groundHeight?: number; readonly yaw?: number };
+    readonly landscape: { readonly settings: { readonly density: 'low' | 'medium' | 'high' } };
+  };
 }
 
 async function explorationMetrics(page: Page): Promise<ExplorationMetrics> {
@@ -11,6 +14,42 @@ async function explorationMetrics(page: Page): Promise<ExplorationMetrics> {
     const value = canvas.dataset.threeRuntimeMetrics;
     if (value === undefined) throw new Error('Runtime metrics missing');
     return JSON.parse(value) as ExplorationMetrics;
+  });
+}
+
+async function qualityTier(page: Page): Promise<'low' | 'medium' | 'high'> {
+  return page.evaluate(() => {
+    let tier: 'low' | 'medium' | 'high' | null = null;
+    document.dispatchEvent(new CustomEvent('three-runtime:command', { detail: {
+      action: 'quality/state', respond: (state: { activeTier: 'low' | 'medium' | 'high' }) => { tier = state.activeTier; },
+    } }));
+    if (tier === null) throw new Error('Quality state unavailable.');
+    return tier;
+  });
+}
+
+async function feedAuto(page: Page, fromMs: number, toMs: number, intervalMs: number): Promise<void> {
+  await page.evaluate(({ from, to, interval }) => {
+    for (let now = from; now <= to; now += interval) {
+      document.dispatchEvent(new CustomEvent('three-runtime:command', { detail: { action: 'quality/sample', nowMs: now } }));
+    }
+  }, { from: fromMs, to: toMs, interval: intervalMs });
+}
+
+async function resetLeaseRecords(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const node = document.querySelector('#app-status');
+    if (!(node instanceof HTMLElement)) throw new Error('Status missing');
+    const target = window as typeof window & {
+      __leaseObserver?: MutationObserver;
+      __leaseRecords?: Array<{ text: string; at: number }>;
+    };
+    target.__leaseObserver?.disconnect();
+    target.__leaseRecords = [];
+    target.__leaseObserver = new MutationObserver(() => {
+      target.__leaseRecords?.push({ text: node.textContent ?? '', at: performance.now() });
+    });
+    target.__leaseObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
 }
 
@@ -25,6 +64,10 @@ async function denyPointerLock(page: Page): Promise<void> {
   });
 }
 
+async function useManualLow(page: Page): Promise<void> {
+  await page.addInitScript(() => localStorage.setItem('badaguan.preferences.v1', JSON.stringify({ version: 1, quality: 'low', motion: 'system' })));
+}
+
 async function axe(page: Page): Promise<void> {
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
   expect(results.violations).toEqual([]);
@@ -33,6 +76,7 @@ async function axe(page: Page): Promise<void> {
 test('keyboard fallback, operational reset, focus, semantics, and axe states', async ({ page }) => {
   test.setTimeout(60_000);
   await denyPointerLock(page);
+  await useManualLow(page);
   await page.goto('/?capability=supported');
   const canvas = page.locator('#app-canvas');
   await expect(canvas).toHaveAttribute('aria-label', 'Interactive view of Badaguan');
@@ -94,9 +138,67 @@ test('keyboard fallback, operational reset, focus, semantics, and axe states', a
   await axe(page);
 });
 
+test('reset feedback leases the live region while default Auto commits button and keyboard tier shifts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  test.setTimeout(60_000);
+  await denyPointerLock(page);
+  await page.goto('/?capability=supported');
+  await page.getByTestId('start-button').press('Enter');
+  const status = page.locator('#app-status');
+  const records = (): Promise<Array<{ text: string; at: number }>> => page.evaluate(() => (window as typeof window & { __leaseRecords?: Array<{ text: string; at: number }> }).__leaseRecords ?? []);
+  const initialTier = await qualityTier(page);
+  const first = initialTier === 'low'
+    ? { interval: 13, nearMs: 19_999, fullMs: 21_000, suffix: 'after sustained smooth performance.' }
+    : { interval: 21, nearMs: 4_999, fullMs: 6_000, suffix: 'to keep movement smooth.' };
+  let cursor = performance.timeOrigin;
+  await feedAuto(page, cursor, cursor + first.nearMs, first.interval); cursor += first.nearMs;
+  expect(await qualityTier(page)).toBe(initialTier);
+  await resetLeaseRecords(page);
+  await page.getByTestId('reset-button').click();
+  await expect(status).toHaveText('Position reset to the safe point.');
+  await expect.poll(async () => (await records()).length).toBe(1);
+  await feedAuto(page, cursor + first.interval, cursor + 1_100, first.interval); cursor += 1_100;
+  expect(await qualityTier(page)).toBe(initialTier);
+  await expect(status).toHaveText('Position reset to the safe point.');
+  expect(await records()).toHaveLength(1);
+  await feedAuto(page, cursor + first.interval, cursor + first.fullMs, first.interval); cursor += first.fullMs;
+  const firstChangedTier = await qualityTier(page);
+  expect(firstChangedTier).not.toBe(initialTier);
+  await expect.poll(async () => (await records()).length, { timeout: 5_000 }).toBe(2);
+  const buttonRecords = await records();
+  const firstLabel = firstChangedTier[0]!.toUpperCase() + firstChangedTier.slice(1);
+  expect(buttonRecords.map(({ text }) => text)).toEqual(['Position reset to the safe point.', `Auto changed quality to ${firstLabel} ${first.suffix}`]);
+  expect(buttonRecords[1]!.at - buttonRecords[0]!.at).toBeGreaterThanOrEqual(2_000);
+
+  const second = first.interval === 13
+    ? { interval: 21, nearMs: 4_999, fullMs: 6_000, suffix: 'to keep movement smooth.' }
+    : { interval: 13, nearMs: 19_999, fullMs: 21_000, suffix: 'after sustained smooth performance.' };
+  cursor += 40_000;
+  await feedAuto(page, cursor, cursor + second.nearMs, second.interval); cursor += second.nearMs;
+  expect(await qualityTier(page)).toBe(firstChangedTier);
+  await resetLeaseRecords(page);
+  await page.locator('#app-canvas').focus();
+  await page.keyboard.press('KeyR');
+  await expect(status).toHaveText('Position reset to the safe point.');
+  await expect.poll(async () => (await records()).length).toBe(1);
+  await feedAuto(page, cursor + second.interval, cursor + 1_100, second.interval); cursor += 1_100;
+  expect(await qualityTier(page)).toBe(firstChangedTier);
+  await expect(status).toHaveText('Position reset to the safe point.');
+  expect(await records()).toHaveLength(1);
+  await feedAuto(page, cursor + second.interval, cursor + second.fullMs, second.interval);
+  const secondChangedTier = await qualityTier(page);
+  expect(secondChangedTier).not.toBe(firstChangedTier);
+  await expect.poll(async () => (await records()).length, { timeout: 5_000 }).toBe(2);
+  const keyboardRecords = await records();
+  const secondLabel = secondChangedTier[0]!.toUpperCase() + secondChangedTier.slice(1);
+  expect(keyboardRecords.map(({ text }) => text)).toEqual(['Position reset to the safe point.', `Auto changed quality to ${secondLabel} ${second.suffix}`]);
+  expect(keyboardRecords[1]!.at - keyboardRecords[0]!.at).toBeGreaterThanOrEqual(2_000);
+});
+
 test('drag fallback never requests lock and outside release stops look', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium');
   await denyPointerLock(page);
+  await useManualLow(page);
   await page.goto('/?capability=supported');
   await page.getByTestId('start-button').click();
   const canvas = page.locator('#app-canvas');

@@ -464,17 +464,6 @@ export interface EnvironmentCameraView {
   readonly target: readonly [number, number, number];
 }
 
-export interface EnvironmentQualityConfig {
-  readonly shadowMapSize: 512 | 1024 | 2048;
-  readonly shadowCameraExtent: number;
-  readonly shadowBias: number;
-  readonly shadowNormalBias: number;
-  readonly fogNearMultiplier: number;
-  readonly fogFarMultiplier: number;
-  readonly ambientMultiplier: number;
-  readonly exposure: number;
-  readonly waterSegments: 1 | 4 | 8;
-}
 
 export interface CoastConfig {
   readonly waterColor: number;
@@ -506,7 +495,6 @@ export interface AtmosphereConfig {
     readonly position: readonly [number, number, number];
     readonly target: readonly [number, number, number];
   };
-  readonly quality: Readonly<Record<LandscapeDensity, EnvironmentQualityConfig>>;
   readonly cameraViews: readonly EnvironmentCameraView[];
   readonly coast: CoastConfig;
 }

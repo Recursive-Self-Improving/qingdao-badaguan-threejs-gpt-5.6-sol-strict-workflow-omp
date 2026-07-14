@@ -1,14 +1,13 @@
+import { QUALITY_PROFILES } from '../quality/qualityTiers';
 import type {
   DistrictData,
   ArchitectureSite,
   LandmarkAnchor,
   LandscapeCameraView,
-  LandscapeDensity,
   LineSegment,
   PlantingZone,
   RoadPlantingCue,
   RoadSpec,
-  VegetationLodPolicy,
   RouteAnchor,
 } from './types';
 
@@ -268,11 +267,6 @@ const authoredLandscapeCameraViews = [
   { id: 'shanhaiguan-plane-road', position: [128, 4.17913, -135], target: [135, 4.691962, -160], roadIds: ['shanhaiguan'], clearanceBounds: { minX: 126, maxX: 130, minZ: -137, maxZ: -133 }, clearanceIntersections: 0, ySemantics: 'world' },
 ] as const satisfies readonly LandscapeCameraView[];
 
-const authoredVegetationLodPolicies = {
-  high: { density: 'high', identityInstancesPerRoad: 1, infillFraction: 1, accentFraction: 1, bands: [{ id: 'near', maximumDistance: 70, canopySegments: 10 }, { id: 'mid', maximumDistance: 150, canopySegments: 7 }, { id: 'far', maximumDistance: 320, canopySegments: 5 }] },
-  medium: { density: 'medium', identityInstancesPerRoad: 1, infillFraction: 0.62, accentFraction: 0.5, bands: [{ id: 'near', maximumDistance: 60, canopySegments: 9 }, { id: 'mid', maximumDistance: 135, canopySegments: 6 }, { id: 'far', maximumDistance: 280, canopySegments: 5 }] },
-  low: { density: 'low', identityInstancesPerRoad: 1, infillFraction: 0, accentFraction: 0, bands: [{ id: 'near', maximumDistance: 50, canopySegments: 7 }, { id: 'mid', maximumDistance: 115, canopySegments: 5 }, { id: 'far', maximumDistance: 240, canopySegments: 4 }] },
-} as const satisfies Readonly<Record<'high' | 'medium' | 'low', VegetationLodPolicy>>;
 
 const authoredDistrict = {
   worldBounds: { minX: -210, maxX: 210, minZ: -300, maxZ: 60 },
@@ -384,4 +378,8 @@ export const ARCHITECTURE_SITES: readonly ArchitectureSite[] = DISTRICT_DATA.arc
 export const ROAD_PLANTING_CUES: readonly RoadPlantingCue[] = DISTRICT_DATA.roadPlantingCues;
 export const PLANTING_ZONES: readonly PlantingZone[] = DISTRICT_DATA.plantingZones;
 export const LANDSCAPE_CAMERA_VIEWS: readonly LandscapeCameraView[] = DISTRICT_DATA.landscapeCameraViews;
-export const VEGETATION_LOD_POLICIES: Readonly<Record<LandscapeDensity, VegetationLodPolicy>> = deepFreeze(authoredVegetationLodPolicies);
+export const VEGETATION_LOD_POLICIES = Object.freeze({
+  low: QUALITY_PROFILES.low.vegetation,
+  medium: QUALITY_PROFILES.medium.vegetation,
+  high: QUALITY_PROFILES.high.vegetation,
+});

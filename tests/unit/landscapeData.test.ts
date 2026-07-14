@@ -133,7 +133,7 @@ describe('canonical landscape data', () => {
 
   it('publishes ordered explicit density and LOD policies that preserve one identity per road', () => {
     expect(deeplyFrozen(VEGETATION_LOD_POLICIES)).toBe(true);
-    expect(Object.keys(VEGETATION_LOD_POLICIES)).toEqual(['high', 'medium', 'low']);
+    expect(Object.keys(VEGETATION_LOD_POLICIES)).toEqual(['low', 'medium', 'high']);
     const policies = [VEGETATION_LOD_POLICIES.high, VEGETATION_LOD_POLICIES.medium, VEGETATION_LOD_POLICIES.low];
     expect(policies.every(({ identityInstancesPerRoad }) => identityInstancesPerRoad === 1)).toBe(true);
     expect(policies.map(({ infillFraction }) => infillFraction)).toEqual([1, 0.62, 0]);

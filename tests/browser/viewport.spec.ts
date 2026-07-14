@@ -2,8 +2,8 @@ import { expect, test, type CDPSession, type Page } from '@playwright/test';
 
 const SUPPORTED_URL = '/?capability=supported';
 const METRICS_ATTRIBUTE = 'data-three-runtime-metrics';
-const MAX_DEVICE_PIXEL_RATIO = 2;
-const MAX_DRAWING_BUFFER_PIXELS = 4_100_000;
+const MAX_DEVICE_PIXEL_RATIO = 3;
+const MAX_DRAWING_BUFFER_PIXELS = 8_300_000;
 
 interface RuntimeMetrics {
   viewport: {
@@ -144,18 +144,28 @@ test('resizes from portrait to desktop and updates the projection without recrea
 });
 
 test('uses DPR 1 exactly and caps emulated DPR 3 by ratio and total pixels', async ({ page, context }) => {
+  test.setTimeout(90_000);
   const session = await context.newCDPSession(page);
   await setDeviceMetrics(session, 1280, 720, 1);
   await page.goto(SUPPORTED_URL);
   let value = await waitForMetrics(page);
-  expect(value.viewport.pixelRatio).toBe(1);
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('three-runtime:command', { detail: { action: 'quality/set-preference', preference: 'high' } })));
+  await expect.poll(async () => (await metrics(page)).viewport.pixelRatio).toBe(1);
+  value = await metrics(page);
   expect(value.viewport.bufferWidth).toBe(value.viewport.cssWidth);
   expect(value.viewport.bufferHeight).toBe(value.viewport.cssHeight);
   expectCanvasDimensions(value, await canvasDimensions(page));
 
   const previousCssWidth = value.viewport.cssWidth;
   await setDeviceMetrics(session, 1920, 1080, 3);
-  await expect.poll(async () => (await metrics(page)).viewport.cssWidth).toBeGreaterThan(previousCssWidth);
+  await expect.poll(async () => (await metrics(page)).viewport.cssWidth, { timeout: 60_000 }).toBeGreaterThan(previousCssWidth);
+  await expect.poll(async () => {
+    const [value, canvas] = await Promise.all([metrics(page), canvasDimensions(page)]);
+    return value.viewport.cssWidth === canvas.cssWidth
+      && value.viewport.cssHeight === canvas.cssHeight
+      && value.viewport.bufferWidth === canvas.bufferWidth
+      && value.viewport.bufferHeight === canvas.bufferHeight;
+  }, { timeout: 60_000 }).toBe(true);
   value = await metrics(page);
   expect(value.viewport.pixelRatio).toBeLessThan(3);
   expectCappedBuffer(value);

@@ -13,6 +13,7 @@ import {
 
 import { sampleGroundHeight } from '../../exploration/navigation';
 import type { ResourceRegistry } from '../../render/ResourceRegistry';
+import { qualityProfile } from '../../quality/qualityTiers';
 import { DISTRICT_DATA, VEGETATION_LOD_POLICIES } from '../districtData';
 import type {
   Bounds2,
@@ -61,7 +62,6 @@ const SIGHTLINE_HALF_WIDTH = 4.5;
 const COAST_OPENING_DEPTH = 16;
 const TREE_SEPARATION = 1.25;
 const WIND_CLEARANCE_PADDING = 0.18;
-const STANDARD_WIND_AMPLITUDE = 0.016;
 const HASH_OFFSET = 0x811c9dc5;
 const HASH_PRIME = 0x01000193;
 const CRAPE_MYRTLE_IDENTITY_CANOPY_SCALE = 0.82;
@@ -1167,6 +1167,7 @@ function createRenderBatches(
   instances: readonly VegetationLayoutInstance[],
   geometries: ReadonlyMap<VegetationGeometryId, BufferGeometry>,
   materials: ReadonlyMap<VegetationMaterialId, MeshStandardMaterial>,
+  vegetationCast: boolean,
 ): readonly RenderBatch[] {
   const grounded = instances.map((instance) => Object.freeze({
     instance,
@@ -1214,7 +1215,7 @@ function createRenderBatches(
     const mesh = resources.register(new InstancedMesh(geometry, material, definition.items.length), group);
     mesh.name = `vegetation:instances:${ACTIVE_LOD_BAND_ID}:${definition.id}`;
     mesh.userData.collidable = false;
-    mesh.castShadow = definition.geometryId === 'trunk';
+    mesh.castShadow = vegetationCast;
     mesh.receiveShadow = definition.geometryId === 'trunk';
     if (definition.dynamic) mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     for (let index = 0; index < definition.items.length; index += 1) {
@@ -1339,6 +1340,7 @@ export function createVegetation(
 ): VegetationBuildResult {
   const immutableSettings = validateSettings(settings);
   const policy = VEGETATION_LOD_POLICIES[immutableSettings.density];
+  const profile = qualityProfile(immutableSettings.density);
   const plan = buildMasterLayout(data);
   const activeInstances = selectInstances(plan, immutableSettings.density);
   const layout: VegetationLayout = Object.freeze({
@@ -1355,7 +1357,7 @@ export function createVegetation(
   root.userData.collidable = false;
   const geometries = createSharedGeometries(resources, group, policy);
   const materials = createSharedMaterials(resources, group);
-  const batches = createRenderBatches(resources, group, root, activeInstances, geometries, materials);
+  const batches = createRenderBatches(resources, group, root, activeInstances, geometries, materials, profile.shadows.vegetationCast);
   const actualGeometryTriangles = new Map<VegetationGeometryId, number>();
   for (const [geometryId, geometry] of geometries) {
     actualGeometryTriangles.set(geometryId, geometryTriangleCount(geometry));
@@ -1418,14 +1420,14 @@ export function createVegetation(
 
   const dynamicBatches = batches.filter((batch) => batch.dynamic);
   const transform = new TransformObject();
-  const amplitude = immutableSettings.motion === 'reduced' || immutableSettings.density === 'low'
-    ? 0
-    : STANDARD_WIND_AMPLITUDE;
+  const amplitude = immutableSettings.motion === 'reduced' ? 0 : profile.animation.windAmplitude;
   let currentTime = 0;
   let captureTime: number | null = null;
   let transformChecksum = HASH_OFFSET;
   let transformChecksumDirty = true;
   let dynamicTransformsInitialized = false;
+  const updateIntervalSeconds = profile.animation.updateHz === 0 ? Number.POSITIVE_INFINITY : 1 / profile.animation.updateHz;
+  let updateAccumulatorSeconds = 0;
 
   const applyDynamicTransforms = (time: number, force: boolean): void => {
     if (!force && time === currentTime) return;
@@ -1483,11 +1485,17 @@ export function createVegetation(
       });
     },
     update(frame: LandscapeUpdateFrame): void {
-      if (!Number.isFinite(frame.elapsedSeconds) || frame.elapsedSeconds < 0) return;
-      applyDynamicTransforms(captureTime ?? frame.elapsedSeconds, false);
+      if (!Number.isFinite(frame.elapsedSeconds) || frame.elapsedSeconds < 0 || !Number.isFinite(frame.deltaSeconds) || frame.deltaSeconds < 0) return;
+      if (captureTime !== null) { applyDynamicTransforms(captureTime, false); return; }
+      if (amplitude === 0 || profile.animation.updateHz === 0) return;
+      updateAccumulatorSeconds += frame.deltaSeconds;
+      if (updateAccumulatorSeconds + Number.EPSILON < updateIntervalSeconds) return;
+      updateAccumulatorSeconds %= updateIntervalSeconds;
+      applyDynamicTransforms(frame.elapsedSeconds, false);
     },
     reset(): void {
       captureTime = null;
+      updateAccumulatorSeconds = 0;
       applyDynamicTransforms(0, true);
     },
     setCaptureTime(time: number | null): void {
